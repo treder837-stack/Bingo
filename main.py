@@ -3,12 +3,11 @@ from kivy.clock import Clock, mainthread
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
 from kivy.uix.button import Button
-
-from jnius import autoclass, PythonJavaClass, java_method
-from android.runnable import run_on_ui_thread
-from android.permissions import request_permissions, Permission
+from kivy.uix.textinput import TextInput
+from kivy.uix.scrollview import ScrollView
 
 from google import genai
+
 import json
 import os
 import re
@@ -17,7 +16,7 @@ from datetime import datetime, date
 
 
 # =========================================================
-# ⚔️ BINGO — SOLO SYSTEM v4
+# ⚔️ BINGO — ANDROID APP
 # =========================================================
 
 PLAYER_NAME = "Abdul"
@@ -25,21 +24,14 @@ ASSISTANT_NAME = "Bingo"
 
 
 # =========================================================
-# 🔑 GEMINI API
+# 🔑 GEMINI
 # =========================================================
 
-# IMPORTANT:
-# Put your NEW Gemini API key here.
-#
-# Example:
-# API_KEY = ""
-#
-# NEVER send your API key to anyone.
-
+# Keep this empty for now.
+# Do NOT put your API key in GitHub.
 API_KEY = ""
 
-# Current Gemini model
-MODEL = "gemini-3.6-flash"
+MODEL = "gemini-3.7-flash"
 
 
 # =========================================================
@@ -52,7 +44,7 @@ SYSTEM_FILE = "system.json"
 
 
 # =========================================================
-# 🤖 CONNECT TO GEMINI
+# 🤖 GEMINI CLIENT
 # =========================================================
 
 client = None
@@ -60,22 +52,14 @@ client = None
 if API_KEY.strip():
 
     try:
+
         client = genai.Client(
             api_key=API_KEY
         )
 
-        print()
-        print("🧠 Gemini client created successfully.")
-        print()
+    except Exception:
 
-    except Exception as error:
-
-        print()
-        print("❌ GEMINI CONNECTION ERROR")
-        print("------------------------------")
-        print(error)
-        print("------------------------------")
-        print()
+        client = None
 
 
 # =========================================================
@@ -85,7 +69,6 @@ if API_KEY.strip():
 def load_json(filename, default):
 
     if not os.path.exists(filename):
-
         return default
 
     try:
@@ -96,23 +79,9 @@ def load_json(filename, default):
             encoding="utf-8"
         ) as file:
 
-            data = json.load(file)
+            return json.load(file)
 
-        return data
-
-    except Exception as error:
-
-        print()
-        print(
-            f"⚠️ Could not load {filename}."
-        )
-
-        print(
-            "Using default data."
-        )
-
-        print(error)
-        print()
+    except Exception:
 
         return default
 
@@ -134,19 +103,13 @@ def save_json(filename, data):
                 indent=2
             )
 
-    except Exception as error:
+    except Exception:
 
-        print()
-        print(
-            f"❌ Could not save {filename}:"
-        )
-
-        print(error)
-        print()
+        pass
 
 
 # =========================================================
-# 👤 LOAD MEMORY
+# 👤 MEMORY
 # =========================================================
 
 memory = load_json(
@@ -155,12 +118,11 @@ memory = load_json(
 )
 
 if not isinstance(memory, list):
-
     memory = []
 
 
 # =========================================================
-# 👤 LOAD PROFILE
+# 👤 PROFILE
 # =========================================================
 
 profile = load_json(
@@ -169,40 +131,29 @@ profile = load_json(
 )
 
 if not isinstance(profile, dict):
-
     profile = {}
 
 
 # =========================================================
-# ⚔️ DEFAULT SYSTEM
+# ⚔️ SYSTEM
 # =========================================================
 
 default_system = {
 
     "level": 1,
-
     "exp": 0,
-
     "exp_required": 100,
-
     "streak": 0,
-
     "quests_completed": 0,
 
     "learning_completed": False,
-
     "training_completed": False,
 
     "last_active_date": "",
-
     "today": ""
 
 }
 
-
-# =========================================================
-# ⚔️ LOAD SYSTEM
-# =========================================================
 
 loaded_system = load_json(
     SYSTEM_FILE,
@@ -219,51 +170,27 @@ if isinstance(loaded_system, dict):
 
 
 # =========================================================
-# 🛡️ REPAIR SYSTEM DATA
+# 🛡️ REPAIR SYSTEM
 # =========================================================
 
-if not isinstance(
-    system.get("level"),
-    int
-):
-
+if not isinstance(system.get("level"), int):
     system["level"] = 1
 
-
-if not isinstance(
-    system.get("exp"),
-    int
-):
-
+if not isinstance(system.get("exp"), int):
     system["exp"] = 0
 
-
-if not isinstance(
-    system.get("exp_required"),
-    int
-):
-
+if not isinstance(system.get("exp_required"), int):
     system["exp_required"] = 100
 
-
-if not isinstance(
-    system.get("streak"),
-    int
-):
-
+if not isinstance(system.get("streak"), int):
     system["streak"] = 0
 
-
-if not isinstance(
-    system.get("quests_completed"),
-    int
-):
-
+if not isinstance(system.get("quests_completed"), int):
     system["quests_completed"] = 0
 
 
 # =========================================================
-# 📅 TODAY
+# 📅 DATE
 # =========================================================
 
 today = datetime.now()
@@ -278,7 +205,7 @@ day_name = today.strftime(
 
 
 # =========================================================
-# 📚 WEEKLY LEARNING
+# 📚 LEARNING
 # =========================================================
 
 DEFAULT_LEARNING = {
@@ -308,7 +235,7 @@ DEFAULT_LEARNING = {
 
 
 # =========================================================
-# ⚔️ WEEKLY TRAINING
+# ⚔️ TRAINING
 # =========================================================
 
 DEFAULT_TRAINING = {
@@ -350,7 +277,6 @@ training_schedule = profile.get(
     "training",
     DEFAULT_TRAINING
 )
-
 
 if not isinstance(
     learning_schedule,
@@ -395,7 +321,7 @@ training_today = training_schedule.get(
 
 
 # =========================================================
-# 🔄 RESET DAILY QUESTS
+# 🔄 DAILY RESET
 # =========================================================
 
 if system.get("today") != today_date:
@@ -422,7 +348,7 @@ def get_system_instruction():
 
 You are Bingo, Abdul's personal AI assistant.
 
-Your personality:
+PERSONALITY:
 
 - intelligent
 - calm
@@ -434,14 +360,14 @@ Your personality:
 - explains difficult subjects step by step
 - never pretends to know something you don't know
 
-You are part of Abdul's personal
+You are part of Abdul's
 Solo-Leveling-inspired progress system.
 
 PLAYER:
-Name: {PLAYER_NAME}
+{PLAYER_NAME}
 
 ASSISTANT:
-Name: {ASSISTANT_NAME}
+{ASSISTANT_NAME}
 
 TODAY:
 {day_name}
@@ -468,7 +394,7 @@ PLAYER PROFILE:
     indent=2
 )}
 
-IMPORTANT SAFETY RULES:
+SAFETY:
 
 Medicine:
 Give educational information.
@@ -482,9 +408,9 @@ credential theft, malware, destructive activity,
 or bypassing security.
 
 Weapons:
-Provide safe, high-level educational information such as
-history, physics, engineering principles, safety,
-and legal/ethical context.
+Provide safe, high-level educational information
+about history, physics, engineering principles,
+safety, and legal/ethical context.
 
 Do not provide instructions that enable construction,
 modification, or harmful use of weapons.
@@ -493,14 +419,13 @@ Martial arts:
 Focus on fitness, technique concepts,
 discipline, safety, and training structure.
 
-When Abdul asks about his schedule,
-use the schedule above.
-
 When Abdul asks about his level, EXP, quests,
-streak, or progress,
-use the PLAYER SYSTEM above.
+streak, or progress, use the PLAYER SYSTEM.
 
-You are Bingo, not an anime character.
+When Abdul asks about his schedule,
+use the schedule information above.
+
+You are Bingo.
 
 You may use a Solo-Leveling-inspired style
 for quests, EXP, levels, and motivation.
@@ -509,166 +434,87 @@ for quests, EXP, levels, and motivation.
 
 
 # =========================================================
-# 📊 STATUS
+# 📊 STATUS TEXT
 # =========================================================
 
-def show_status():
+def status_text():
 
-    print()
-
-    print(
-        "╔══════════════════════════════════════╗"
-    )
-
-    print(
-        "║          ⚔️ BINGO SYSTEM             ║"
-    )
-
-    print(
-        "╠══════════════════════════════════════╣"
-    )
-
-    print(
-        f"║ 👤 PLAYER : {PLAYER_NAME:<23}║"
-    )
-
-    print(
-        f"║ ⚡ LEVEL  : {system['level']:<23}║"
-    )
-
-    print(
-        f"║ ⭐ EXP    : "
-        f"{system['exp']} / "
-        f"{system['exp_required']:<17}║"
-    )
-
-    print(
-        f"║ 🔥 STREAK : "
-        f"{system['streak']} days"
-        f"{' ':<17}║"
-    )
-
-    print(
-        f"║ 🎯 QUESTS : "
-        f"{system['quests_completed']:<23}║"
-    )
-
-    print(
-        "╠══════════════════════════════════════╣"
-    )
-
-    learning_mark = (
+    learning = (
         "✅"
         if system["learning_completed"]
         else "⬜"
     )
 
-    training_mark = (
+    training = (
         "✅"
         if system["training_completed"]
         else "⬜"
     )
 
-    print(
-        f"║ {learning_mark} Learning quest              ║"
+    return (
+        "⚔️ BINGO SYSTEM\n\n"
+        f"👤 Player: {PLAYER_NAME}\n"
+        f"⚡ Level: {system['level']}\n"
+        f"⭐ EXP: {system['exp']} / "
+        f"{system['exp_required']}\n"
+        f"🔥 Streak: {system['streak']} days\n"
+        f"🎯 Quests: {system['quests_completed']}\n\n"
+        f"{learning} Learning quest\n"
+        f"{training} Training quest"
     )
-
-    print(
-        f"║ {training_mark} Training quest              ║"
-    )
-
-    print(
-        "╚══════════════════════════════════════╝"
-    )
-
-    print()
 
 
 # =========================================================
-# 🎯 TODAY'S QUESTS
+# 🎯 QUEST TEXT
 # =========================================================
 
-def show_quests():
+def quest_text():
 
-    learning_mark = (
+    learning = (
         "✅"
         if system["learning_completed"]
         else "⬜"
     )
 
-    training_mark = (
+    training = (
         "✅"
         if system["training_completed"]
         else "⬜"
     )
 
-    print()
-
-    print(
-        "╔══════════════════════════════════════╗"
+    return (
+        "🎯 DAILY QUEST\n\n"
+        f"📅 {day_name}\n\n"
+        f"{learning} 📚 LEARNING\n"
+        f"   {learning_today}\n\n"
+        f"{training} ⚔️ TRAINING\n"
+        f"   {training_today}\n\n"
+        "🎁 REWARDS\n"
+        "📚 Learning: +50 EXP\n"
+        "⚔️ Training: +50 EXP\n"
+        "🌟 Both: +100 EXP"
     )
 
-    print(
-        "║          🎯 DAILY QUEST              ║"
-    )
 
-    print(
-        "╠══════════════════════════════════════╣"
-    )
+# =========================================================
+# 📅 SCHEDULE TEXT
+# =========================================================
 
-    print(
-        f"║ 📅 {day_name:<31}║"
-    )
+def schedule_text():
 
-    print(
-        "║                                      ║"
-    )
+    text = "📅 WEEKLY SCHEDULE\n\n"
 
-    print(
-        f"║ {learning_mark} 📚 LEARNING                    ║"
-    )
+    for day in DEFAULT_LEARNING:
 
-    print(
-        f"║    {learning_today:<32}║"
-    )
+        text += (
+            f"📅 {day}\n"
+            f"📚 {learning_schedule.get(day, DEFAULT_LEARNING[day])}\n"
+            f"⚔️ {training_schedule.get(day, DEFAULT_TRAINING[day])}\n\n"
+        )
 
-    print(
-        "║                                      ║"
-    )
+    text += "🍽️ Friday lunch: 2:45 PM"
 
-    print(
-        f"║ {training_mark} ⚔️ TRAINING                    ║"
-    )
-
-    print(
-        f"║    {training_today:<32}║"
-    )
-
-    print(
-        "║                                      ║"
-    )
-
-    print(
-        "║ 🎁 REWARDS                           ║"
-    )
-
-    print(
-        "║    Learning  +50 EXP                 ║"
-    )
-
-    print(
-        "║    Training  +50 EXP                 ║"
-    )
-
-    print(
-        "║    Both       +100 EXP               ║"
-    )
-
-    print(
-        "╚══════════════════════════════════════╝"
-    )
-
-    print()
+    return text
 
 
 # =========================================================
@@ -680,7 +526,6 @@ def add_exp(amount):
     old_level = system["level"]
 
     system["exp"] += amount
-
 
     while system["exp"] >= system["exp_required"]:
 
@@ -695,58 +540,26 @@ def add_exp(amount):
             )
         )
 
-
     save_json(
         SYSTEM_FILE,
         system
     )
 
-
     if system["level"] > old_level:
 
-        print()
-
-        print(
-            "╔══════════════════════════════════════╗"
+        return (
+            f"⚡ LEVEL UP!\n\n"
+            f"New Level: {system['level']}\n"
+            "🔥 Power increased.\n"
+            "🧠 Knowledge increased.\n"
+            "💪 Discipline increased."
         )
 
-        print(
-            "║           ⚡ LEVEL UP! ⚡             ║"
-        )
-
-        print(
-            "╠══════════════════════════════════════╣"
-        )
-
-        print(
-            f"║        LEVEL {system['level']:<21}║"
-        )
-
-        print(
-            "║                                      ║"
-        )
-
-        print(
-            "║   🔥 Your power is increasing.       ║"
-        )
-
-        print(
-            "║   🧠 Knowledge is increasing.        ║"
-        )
-
-        print(
-            "║   💪 Discipline is increasing.       ║"
-        )
-
-        print(
-            "╚══════════════════════════════════════╝"
-        )
-
-        print()
+    return ""
 
 
 # =========================================================
-# 🔥 UPDATE STREAK
+# 🔥 STREAK
 # =========================================================
 
 def update_streak():
@@ -756,11 +569,8 @@ def update_streak():
         ""
     )
 
-
     if last_date == today_date:
-
         return
-
 
     if last_date == "":
 
@@ -781,7 +591,6 @@ def update_streak():
                 current - last
             ).days
 
-
             if difference == 1:
 
                 system["streak"] += 1
@@ -793,7 +602,6 @@ def update_streak():
         except Exception:
 
             system["streak"] = 1
-
 
     system["last_active_date"] = today_date
 
@@ -811,17 +619,10 @@ def complete_learning():
 
     if system["learning_completed"]:
 
-        print()
-
-        print(
-            "Bingo: Your learning quest "
-            "is already completed today. ✅"
+        return (
+            "📚 Learning quest is "
+            "already completed today. ✅"
         )
-
-        print()
-
-        return
-
 
     system["learning_completed"] = True
 
@@ -829,40 +630,22 @@ def complete_learning():
 
     update_streak()
 
-    add_exp(50)
+    level_message = add_exp(50)
 
-
-    print()
-
-    print(
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    )
-
-    print(
-        "📚 LEARNING QUEST COMPLETE!"
-    )
-
-    print(
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    )
-
-    print(
-        f"📖 Subject: {learning_today}"
-    )
-
-    print(
-        "✨ +50 EXP"
-    )
-
-    print(
+    message = (
+        "📚 LEARNING QUEST COMPLETE!\n\n"
+        f"📖 Subject: {learning_today}\n"
+        "✨ +50 EXP\n"
         f"🔥 Streak: {system['streak']} days"
     )
 
-    print(
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    )
+    if level_message:
 
-    print()
+        message += (
+            "\n\n" + level_message
+        )
+
+    return message
 
 
 # =========================================================
@@ -873,17 +656,10 @@ def complete_training():
 
     if system["training_completed"]:
 
-        print()
-
-        print(
-            "Bingo: Your training quest "
-            "is already completed today. ✅"
+        return (
+            "⚔️ Training quest is "
+            "already completed today. ✅"
         )
-
-        print()
-
-        return
-
 
     system["training_completed"] = True
 
@@ -891,142 +667,50 @@ def complete_training():
 
     update_streak()
 
-    add_exp(50)
+    level_message = add_exp(50)
 
-
-    print()
-
-    print(
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    )
-
-    print(
-        "⚔️ TRAINING QUEST COMPLETE!"
-    )
-
-    print(
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    )
-
-    print(
-        f"🥋 Training: {training_today}"
-    )
-
-    print(
-        "✨ +50 EXP"
-    )
-
-    print(
+    message = (
+        "⚔️ TRAINING QUEST COMPLETE!\n\n"
+        f"🥋 Training: {training_today}\n"
+        "✨ +50 EXP\n"
         f"🔥 Streak: {system['streak']} days"
     )
 
-    print(
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    )
+    if level_message:
 
-    print()
-
-
-# =========================================================
-# 🎯 COMPLETE QUEST
-# =========================================================
-
-def complete_quest():
-
-    print()
-
-    print(
-        "🎯 QUEST COMPLETION"
-    )
-
-    print()
-
-    print(
-        "1. 📚 Complete Learning"
-    )
-
-    print(
-        "2. ⚔️ Complete Training"
-    )
-
-    print(
-        "3. 🌟 Complete Both"
-    )
-
-    print()
-
-
-    choice = input(
-        "Abdul: "
-    ).strip()
-
-
-    if choice == "1":
-
-        complete_learning()
-
-
-    elif choice == "2":
-
-        complete_training()
-
-
-    elif choice == "3":
-
-        complete_learning()
-
-        complete_training()
-
-
-    else:
-
-        print()
-
-        print(
-            "Bingo: Invalid selection."
+        message += (
+            "\n\n" + level_message
         )
 
-        print()
+    return message
+
+
+# =========================================================
+# 🎯 COMPLETE BOTH
+# =========================================================
+
+def complete_both():
+
+    first = complete_learning()
+
+    second = complete_training()
+
+    return (
+        first
+        + "\n\n"
+        + second
+    )
 
 
 # =========================================================
 # ⏰ REMINDER
 # =========================================================
 
-def reminder_message(message):
-
-    print()
-    print()
-
-    print(
-        "╔══════════════════════════════════════╗"
-    )
-
-    print(
-        "║            🔔 BINGO                 ║"
-    )
-
-    print(
-        "╠══════════════════════════════════════╣"
-    )
-
-    print(
-        f"║ {message:<36}║"
-    )
-
-    print(
-        "╚══════════════════════════════════════╝"
-    )
-
-    print()
-
-
-def set_reminder(minutes, message):
+def set_reminder(minutes):
 
     timer = threading.Timer(
         minutes * 60,
-        reminder_message,
-        args=(message,)
+        reminder_callback
     )
 
     timer.daemon = True
@@ -1034,127 +718,23 @@ def set_reminder(minutes, message):
     timer.start()
 
 
-    print()
+def reminder_callback():
 
-    print(
-        f"🔔 Bingo: Reminder set for "
-        f"{minutes} minute(s)."
+    update_chat(
+        "🔔 Bingo reminder:\n"
+        "Abdul, your reminder is here. ⚔️"
     )
 
-    print()
-
 
 # =========================================================
-# 🗣️ REMINDER COMMAND
+# 🗣️ LOCAL COMMANDS
 # =========================================================
 
-def check_reminder_command(message):
+def local_command(message):
 
     text = message.lower().strip()
 
-
-    if text == "later":
-
-        set_reminder(
-            5,
-            "Abdul, your 5-minute reminder is here. ⚔️"
-        )
-
-        return True
-
-
-    pattern = r"remind me in (\d+) minutes?"
-
-    match = re.search(
-        pattern,
-        text
-    )
-
-
-    if match:
-
-        minutes = int(
-            match.group(1)
-        )
-
-
-        if minutes <= 0:
-
-            minutes = 1
-
-
-        set_reminder(
-            minutes,
-            "Abdul, your reminder is here. ⚔️"
-        )
-
-        return True
-
-
-    return False
-
-
-# =========================================================
-# 📅 SHOW SCHEDULE
-# =========================================================
-
-def show_schedule():
-
-    print()
-
-    print(
-        "╔══════════════════════════════════════╗"
-    )
-
-    print(
-        "║          📅 ABDUL'S SCHEDULE         ║"
-    )
-
-    print(
-        "╚══════════════════════════════════════╝"
-    )
-
-
-    for day in DEFAULT_LEARNING:
-
-        print()
-
-        print(
-            f"📅 {day}"
-        )
-
-        print(
-            f"   📚 Learning : "
-            f"{learning_schedule.get(day, DEFAULT_LEARNING[day])}"
-        )
-
-        print(
-            f"   ⚔️ Training : "
-            f"{training_schedule.get(day, DEFAULT_TRAINING[day])}"
-        )
-
-
-    print()
-
-    print(
-        "🍽️ Friday lunch: 2:45 PM"
-    )
-
-    print()
-
-
-# =========================================================
-# 🧠 LOCAL COMMANDS
-# =========================================================
-
-def local_command(user_message):
-
-    text = user_message.lower().strip()
-
-
-    # -----------------------------------------
     # STATUS
-    # -----------------------------------------
 
     if text in (
         "status",
@@ -1165,14 +745,10 @@ def local_command(user_message):
         "player status"
     ):
 
-        show_status()
-
-        return True
+        return status_text()
 
 
-    # -----------------------------------------
-    # QUEST
-    # -----------------------------------------
+    # QUESTS
 
     if text in (
         "quest",
@@ -1184,14 +760,10 @@ def local_command(user_message):
         "todays quests"
     ):
 
-        show_quests()
-
-        return True
+        return quest_text()
 
 
-    # -----------------------------------------
-    # TODAY'S LEARNING
-    # -----------------------------------------
+    # LEARNING
 
     if (
         "what am i learning today" in text
@@ -1200,25 +772,14 @@ def local_command(user_message):
         or "todays learning" in text
     ):
 
-        print()
-
-        print(
-            f"Bingo: Today is {day_name}. 📅"
+        return (
+            f"📅 Today is {day_name}.\n\n"
+            f"📚 Your learning quest is:\n"
+            f"{learning_today}"
         )
 
-        print(
-            f"Bingo: Your learning quest is "
-            f"{learning_today}. 🧠"
-        )
 
-        print()
-
-        return True
-
-
-    # -----------------------------------------
-    # TODAY'S TRAINING
-    # -----------------------------------------
+    # TRAINING
 
     if (
         "what is my training today" in text
@@ -1227,50 +788,32 @@ def local_command(user_message):
         or "todays training" in text
     ):
 
-        print()
-
-        print(
-            f"Bingo: Today's training is "
-            f"{training_today}. ⚔️"
+        return (
+            f"📅 Today is {day_name}.\n\n"
+            f"⚔️ Your training is:\n"
+            f"{training_today}"
         )
 
-        print()
 
-        return True
-
-
-    # -----------------------------------------
     # LEVEL
-    # -----------------------------------------
 
     if (
         "what is my level" in text
         or "what's my level" in text
         or "what is my current level" in text
-        or "my level" in text
+        or text == "my level"
     ):
 
-        print()
-
-        print(
-            f"Bingo: You are LEVEL "
-            f"{system['level']} ⚡"
-        )
-
-        print(
-            f"Bingo: EXP "
+        return (
+            f"⚡ Your level is "
+            f"{system['level']}.\n\n"
+            f"⭐ EXP: "
             f"{system['exp']} / "
-            f"{system['exp_required']} ⭐"
+            f"{system['exp_required']}"
         )
 
-        print()
 
-        return True
-
-
-    # -----------------------------------------
     # EXP
-    # -----------------------------------------
 
     if (
         "how much exp" in text
@@ -1281,22 +824,14 @@ def local_command(user_message):
         or "my xp" in text
     ):
 
-        print()
-
-        print(
-            f"Bingo: You currently have "
+        return (
+            f"⭐ EXP: "
             f"{system['exp']} / "
-            f"{system['exp_required']} EXP. ⭐"
+            f"{system['exp_required']}"
         )
 
-        print()
 
-        return True
-
-
-    # -----------------------------------------
     # STREAK
-    # -----------------------------------------
 
     if (
         "my streak" in text
@@ -1305,21 +840,13 @@ def local_command(user_message):
         or "current streak" in text
     ):
 
-        print()
-
-        print(
-            f"Bingo: Your current streak is "
-            f"{system['streak']} day(s). 🔥"
+        return (
+            f"🔥 Your streak is "
+            f"{system['streak']} day(s)."
         )
 
-        print()
 
-        return True
-
-
-    # -----------------------------------------
     # QUEST PROGRESS
-    # -----------------------------------------
 
     if (
         "quest progress" in text
@@ -1340,29 +867,14 @@ def local_command(user_message):
             else "not completed"
         )
 
-
-        print()
-
-        print(
-            "Bingo: Today's quest progress:"
-        )
-
-        print(
-            f"📚 Learning: {learning}"
-        )
-
-        print(
+        return (
+            "🎯 QUEST PROGRESS\n\n"
+            f"📚 Learning: {learning}\n"
             f"⚔️ Training: {training}"
         )
 
-        print()
 
-        return True
-
-
-    # -----------------------------------------
     # SCHEDULE
-    # -----------------------------------------
 
     if text in (
         "schedule",
@@ -1373,81 +885,127 @@ def local_command(user_message):
         "weekly schedule"
     ):
 
-        show_schedule()
-
-        return True
+        return schedule_text()
 
 
-    # -----------------------------------------
-    # NOTHING FOUND
-    # -----------------------------------------
+    # COMPLETE LEARNING
 
-    return False
+    if text in (
+        "complete learning",
+        "/complete learning"
+    ):
+
+        return complete_learning()
+
+
+    # COMPLETE TRAINING
+
+    if text in (
+        "complete training",
+        "/complete training"
+    ):
+
+        return complete_training()
+
+
+    # COMPLETE BOTH
+
+    if text in (
+        "complete both",
+        "/complete both",
+        "complete quests",
+        "/complete"
+    ):
+
+        return complete_both()
+
+
+    # REMINDER
+
+    if text == "later":
+
+        set_reminder(5)
+
+        return (
+            "🔔 Reminder set for "
+            "5 minutes."
+        )
+
+
+    match = re.search(
+        r"remind me in (\d+) minutes?",
+        text
+    )
+
+    if match:
+
+        minutes = int(
+            match.group(1)
+        )
+
+        if minutes <= 0:
+            minutes = 1
+
+        set_reminder(minutes)
+
+        return (
+            f"🔔 Reminder set for "
+            f"{minutes} minute(s)."
+        )
+
+
+    return None
 
 
 # =========================================================
-# 🧠 ASK BINGO AI
+# 🧠 ASK BINGO
 # =========================================================
 
-def ask_bingo(user_message):
+def ask_bingo_android(message):
 
     global memory
 
+    # LOCAL COMMAND
 
-    # -----------------------------------------
-    # CHECK API KEY
-    # -----------------------------------------
+    result = local_command(
+        message
+    )
 
-    if (
-        not API_KEY.strip()
-        or API_KEY == "YOUR_NEW_API_KEY"
-    ):
+    if result is not None:
 
-        print()
-
-        print(
-            "⚠️ Bingo AI is not connected."
+        update_chat(
+            "Bingo: " + result
         )
-
-        print()
-
-        print(
-            "Local Bingo commands are working."
-        )
-
-        print(
-            "Add your Gemini API key to API_KEY."
-        )
-
-        print()
 
         return
 
 
-    # -----------------------------------------
-    # CHECK CLIENT
-    # -----------------------------------------
+    # API KEY
+
+    if not API_KEY.strip():
+
+        update_chat(
+            "Bingo: ⚠️ AI is offline.\n\n"
+            "Local commands are working.\n\n"
+            "Gemini API key has not been added yet."
+        )
+
+        return
+
+
+    # CLIENT
 
     if client is None:
 
-        print()
-
-        print(
-            "❌ Bingo could not connect to Gemini."
-        )
-
-        print(
+        update_chat(
+            "Bingo: ❌ Gemini connection failed.\n\n"
             "Check your API key and internet connection."
         )
-
-        print()
 
         return
 
 
-    # -----------------------------------------
-    # BUILD CONVERSATION
-    # -----------------------------------------
+    # CONVERSATION
 
     contents = list(memory)
 
@@ -1456,16 +1014,12 @@ def ask_bingo(user_message):
             "role": "user",
             "parts": [
                 {
-                    "text": user_message
+                    "text": message
                 }
             ]
         }
     )
 
-
-    # -----------------------------------------
-    # ASK GEMINI
-    # -----------------------------------------
 
     try:
 
@@ -1479,91 +1033,52 @@ def ask_bingo(user_message):
                 "system_instruction":
                     get_system_instruction()
             }
-
         )
 
 
-        # -----------------------------------------
-        # GET ANSWER
-        # -----------------------------------------
-
         answer = response.text
-
 
         if not answer:
 
             answer = (
-                "I received an empty response "
-                "from Gemini."
+                "I received an empty response."
             )
 
 
-        print()
-
-        print(
-            "Bingo:",
-            answer
-        )
-
-        print()
-
-
-        # -----------------------------------------
-        # SAVE USER MESSAGE
-        # -----------------------------------------
+        # SAVE USER
 
         memory.append(
-
             {
-                "role":
-                    "user",
-
-                "parts":
-                    [
-                        {
-                            "text":
-                                user_message
-                        }
-                    ]
+                "role": "user",
+                "parts": [
+                    {
+                        "text": message
+                    }
+                ]
             }
-
         )
 
 
-        # -----------------------------------------
-        # SAVE BINGO RESPONSE
-        # -----------------------------------------
+        # SAVE BINGO
 
         memory.append(
-
             {
-                "role":
-                    "model",
-
-                "parts":
-                    [
-                        {
-                            "text":
-                                answer
-                        }
-                    ]
+                "role": "model",
+                "parts": [
+                    {
+                        "text": answer
+                    }
+                ]
             }
-
         )
 
 
-        # -----------------------------------------
         # LIMIT MEMORY
-        # -----------------------------------------
 
         if len(memory) > 40:
 
             memory = memory[-40:]
 
-
-        # -----------------------------------------
-        # SAVE MEMORY
-        # -----------------------------------------
 
         save_json(
             MEMORY_FILE,
@@ -1571,303 +1086,250 @@ def ask_bingo(user_message):
         )
 
 
+        update_chat(
+            "Bingo: " + answer
+        )
+
+
     except Exception as error:
 
-        print()
-
-        print(
-            "❌ Bingo encountered an error:"
+        update_chat(
+            "Bingo: ❌ Gemini error.\n\n"
+            + str(error)
         )
-
-        print()
-
-        print(
-            error
-        )
-
-        print()
-
-        print(
-            "💡 Check:"
-        )
-
-        print(
-            "1. Internet connection"
-        )
-
-        print(
-            "2. Gemini API key"
-        )
-
-        print(
-            "3. google-genai package"
-        )
-
-        print()
 
 
 # =========================================================
-# 💾 SAVE EVERYTHING
+# 🗣️ TALK TO BINGO
 # =========================================================
 
-def save_all():
+def talk_to_bingo(message):
 
-    save_json(
-        MEMORY_FILE,
-        memory
-    )
+    message = message.strip()
 
-    save_json(
-        SYSTEM_FILE,
-        system
-    )
+    if not message:
+        return
 
-
-# =========================================================
-# ⚔️ START BINGO
-# =========================================================
-
-print()
-
-print(
-    "========================================"
-)
-
-print(
-    "              ⚔️ BINGO"
-)
-
-print(
-    "========================================"
-)
-
-print()
-
-print(
-    "Player    :",
-    PLAYER_NAME
-)
-
-print(
-    "Assistant :",
-    ASSISTANT_NAME
-)
-
-print()
-
-print(
-    "🧠 AI BRAIN :",
-    "ONLINE" if client else "OFFLINE"
-)
-
-print(
-    "💾 MEMORY   : ONLINE"
-)
-
-print(
-    "👤 PROFILE  : ONLINE"
-)
-
-print(
-    "⚔️ SYSTEM   : ONLINE"
-)
-
-print()
-
-
-if memory:
-
-    print(
-        "💾 Previous conversation memory loaded."
-    )
-
-else:
-
-    print(
-        "💾 No previous conversation memory found."
-    )
-
-
-if profile:
-
-    print(
-        "👤 Abdul's profile loaded."
-    )
-
-
-print(
-    "⚔️ Player system loaded."
-)
-
-print()
-
-print(
-    f"📅 Today: {day_name}"
-)
-
-print(
-    f"📚 Learning: {learning_today}"
-)
-
-print(
-    f"⚔️ Training: {training_today}"
-)
-
-print()
-
-print(
-    "Bingo: Hello Abdul. I'm ready. ⚔️"
-)
-
-print()
-
-print(
-    "Commands:"
-)
-
-print(
-    "  /status   → Player status"
-)
-
-print(
-    "  /quest    → Today's quests"
-)
-
-print(
-    "  /complete → Complete quests"
-)
-
-print(
-    "  /schedule → Weekly schedule"
-)
-
-print(
-    "  later     → Reminder in 5 minutes"
-)
-
-print(
-    "  remind me in 10 minutes"
-)
-
-print(
-    "  exit      → Shut down Bingo"
-)
-
-print()
+    threading.Thread(
+        target=ask_bingo_android,
+        args=(message,),
+        daemon=True
+    ).start()
 
 
 # =========================================================
-# 🔄 MAIN LOOP
+# 📱 ANDROID UI
 # =========================================================
 
-while True:
-
-    try:
-
-        user_message = input(
-            "Abdul: "
-        ).strip()
+bingo_app = None
 
 
-    except (
-        KeyboardInterrupt,
-        EOFError
-    ):
+class BingoLayout(BoxLayout):
 
-        print()
+    def __init__(self, **kwargs):
 
-        print(
-            "💾 Saving Bingo..."
+        super().__init__(
+            orientation="vertical",
+            padding=10,
+            spacing=10,
+            **kwargs
         )
 
-        save_all()
 
-        print(
-            "Bingo: See you later, Abdul. ⚔️"
+        # =================================================
+        # CHAT
+        # =================================================
+
+        self.chat_label = Label(
+
+            text=(
+                "⚔️ BINGO\n\n"
+                "Hello Abdul.\n"
+                "I'm ready. ⚔️\n\n"
+                "Try:\n"
+                "/status\n"
+                "/quest\n"
+                "/schedule"
+            ),
+
+            size_hint_y=None,
+
+            halign="left",
+
+            valign="top"
         )
 
-        break
 
-
-    # -----------------------------------------
-    # EMPTY MESSAGE
-    # -----------------------------------------
-
-    if not user_message:
-
-        continue
-
-
-    # -----------------------------------------
-    # EXIT
-    # -----------------------------------------
-
-    if user_message.lower() in (
-        "exit",
-        "/exit",
-        "quit"
-    ):
-
-        save_all()
-
-        print()
-
-        print(
-            "💾 Memory saved."
+        self.chat_label.bind(
+            texture_size=
+            self.chat_label.setter(
+                "size"
+            )
         )
 
-        print(
-            "⚔️ System saved."
+
+        self.scroll = ScrollView()
+
+
+        self.scroll.add_widget(
+            self.chat_label
         )
 
-        print(
-            "Bingo: See you later, Abdul. ⚔️"
+
+        self.add_widget(
+            self.scroll
         )
 
-        break
+
+        # =================================================
+        # MESSAGE INPUT
+        # =================================================
+
+        self.message_box = TextInput(
+
+            hint_text=
+            "Talk to Bingo...",
+
+            multiline=False,
+
+            size_hint_y=None,
+
+            height=55
+        )
 
 
-    # -----------------------------------------
-    # COMPLETE QUEST
-    # -----------------------------------------
-
-    if user_message.lower() in (
-        "/complete",
-        "complete",
-        "complete quest"
-    ):
-
-        complete_quest()
-
-        continue
+        self.message_box.bind(
+            on_text_validate=
+            self.send_message
+        )
 
 
-    # -----------------------------------------
-    # REMINDERS
-    # -----------------------------------------
-
-    if check_reminder_command(
-        user_message
-    ):
-
-        continue
+        self.add_widget(
+            self.message_box
+        )
 
 
-    # -----------------------------------------
-    # LOCAL COMMANDS
-    # -----------------------------------------
+        # =================================================
+        # SEND BUTTON
+        # =================================================
 
-    if local_command(
-        user_message
-    ):
+        send_button = Button(
 
-        continue
+            text="⚔️ SEND",
+
+            size_hint_y=None,
+
+            height=55
+        )
 
 
-    # -----------------------------------------
-    # AI
-    # -----------------------------------------
+        send_button.bind(
+            on_press=
+            self.send_message
+        )
 
-    ask_bingo(
-        user_message
-    )
+
+        self.add_widget(
+            send_button
+        )
+
+
+    # =====================================================
+    # SEND
+    # =====================================================
+
+    def send_message(self, instance):
+
+        message = (
+            self.message_box.text.strip()
+        )
+
+
+        if not message:
+            return
+
+
+        self.chat_label.text += (
+            "\n\nAbdul: "
+            + message
+        )
+
+
+        self.message_box.text = ""
+
+
+        talk_to_bingo(
+            message
+        )
+
+
+        Clock.schedule_once(
+            self.scroll_to_bottom,
+            0.1
+        )
+
+
+    # =====================================================
+    # UPDATE CHAT
+    # =====================================================
+
+    @mainthread
+    def update_chat(self, message):
+
+        self.chat_label.text += (
+            "\n\n" + message
+        )
+
+
+        Clock.schedule_once(
+            self.scroll_to_bottom,
+            0.1
+        )
+
+
+    # =====================================================
+    # SCROLL
+    # =====================================================
+
+    def scroll_to_bottom(self, *args):
+
+        self.scroll.scroll_y = 0
+
+
+# =========================================================
+# 📢 GLOBAL UI UPDATE
+# =========================================================
+
+def update_chat(message):
+
+    if bingo_app is not None:
+
+        if bingo_app.root is not None:
+
+            bingo_app.root.update_chat(
+                message
+            )
+
+
+# =========================================================
+# 📱 BINGO APP
+# =========================================================
+
+class BingoApp(App):
+
+    def build(self):
+
+        global bingo_app
+
+        bingo_app = self
+
+        return BingoLayout()
+
+
+# =========================================================
+# 🚀 START
+# =========================================================
+
+if __name__ == "__main__":
+
+    BingoApp().run()
