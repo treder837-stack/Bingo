@@ -16,7 +16,7 @@ source.dir = .
 source.main = main.py
 
 # (list) Application requirements
-requirements = python3,kivy,pyjnius
+requirements = python3,kivy,pyjnius,google-genai
 
 # (str) Application version
 version = 1.0
@@ -25,7 +25,7 @@ version = 1.0
 orientation = portrait
 
 # (list) Android permissions
-android.permissions = RECORD_AUDIO
+android.permissions = INTERNET
 
 # (bool) Fullscreen
 fullscreen = 0
