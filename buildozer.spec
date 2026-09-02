@@ -1,5 +1,16 @@
 [app]
 
+title = Bingo
+package.name = bingo
+package.domain = org.bingo
+source.dir = .
+source.main = main.py
+
+requirements = python3,kivy,pyjnius
+
+android.accept_sdk_license = True
+android.build_tools_version = 35.0.0
+
 # (str) Title of your application
 title = Bingo
 
