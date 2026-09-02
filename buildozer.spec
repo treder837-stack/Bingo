@@ -1,16 +1,5 @@
 [app]
 
-title = Bingo
-package.name = bingo
-package.domain = org.bingo
-source.dir = .
-source.main = main.py
-
-requirements = python3,kivy,pyjnius
-
-android.accept_sdk_license = True
-android.build_tools_version = 35.0.0
-
 # (str) Title of your application
 title = Bingo
 
@@ -41,17 +30,8 @@ android.permissions = INTERNET
 # (bool) Fullscreen
 fullscreen = 0
 
-
-[buildozer]
-
-# (str) Log level
-log_level = 2
-
-# (bool) Warn when buildozer is run as root
-warn_on_root = 1
-
-
-[android]
+# (bool) Accept Android SDK licenses automatically
+android.accept_sdk_license = True
 
 # (str) Android API
 android.api = 35
@@ -65,5 +45,14 @@ android.ndk = 27c
 # (str) Android architecture
 android.arch = arm64-v8a
 
-# (bool) Accept Android SDK licenses automatically
-android.accept_sdk_license = True
+# (str) Android build tools version
+android.build_tools_version = 35.0.0
+
+
+[buildozer]
+
+# (str) Log level
+log_level = 2
+
+# (bool) Warn when buildozer is run as root
+warn_on_root = 1
