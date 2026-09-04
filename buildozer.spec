@@ -37,7 +37,7 @@ android.accept_sdk_license = True
 android.api = 35
 
 # (str) Minimum Android API
-android.minapi = 23
+android.minapi = 28
 
 # (str) Android NDK version
 android.ndk = 27c
