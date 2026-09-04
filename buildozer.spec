@@ -25,7 +25,7 @@ version = 1.0
 orientation = portrait
 
 # (list) Android permissions
-android.permissions = INTERNET
+android.permissions = INTERNET,RECORD_AUDIO
 
 # (bool) Fullscreen
 fullscreen = 0
