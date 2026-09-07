@@ -258,7 +258,7 @@ class BingoApp(App):
             font_size=22
         )
 
-        self.button.bind(on_press=self.talk)
+        self.button.bind(on_press=lambda instance: self.set_message("✅ Bingo GUI is working!"))
 
         self.layout.add_widget(self.title_label)
         self.layout.add_widget(self.message)
