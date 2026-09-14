@@ -1875,7 +1875,7 @@ def ask_bingo_android(message):
         update_chat(
             "Bingo: ❌ Error: " + str(error)
         )
-        class BingoLayout(BoxLayout):
+class BingoLayout(BoxLayout):
 
     def __init__(self, **kwargs):
 
