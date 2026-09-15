@@ -6,9 +6,9 @@ from kivy.uix.button import Button
 from kivy.uix.textinput import TextInput
 from kivy.uix.scrollview import ScrollView
 
-from jnius import autoclass, PythonJavaClass, java_method
-from android.runnable import run_on_ui_thread
-from android.permissions import request_permissions, Permission
+# from jnius import autoclass, PythonJavaClass, java_method
+# from android.runnable import run_on_ui_thread
+# from android.permissions import request_permissions, Permission
 
 from google import genai
 import json
@@ -1623,139 +1623,6 @@ def save_all():
         SYSTEM_FILE,
         system
     )
-
-
-# =========================================================
-# ⚔️ START BINGO
-# =========================================================
-
-print()
-
-print(
-    "========================================"
-)
-
-print(
-    "              ⚔️ BINGO"
-)
-
-print(
-    "========================================"
-)
-
-print()
-
-print(
-    "Player    :",
-    PLAYER_NAME
-)
-
-print(
-    "Assistant :",
-    ASSISTANT_NAME
-)
-
-print()
-
-print(
-    "🧠 AI BRAIN :",
-    "ONLINE" if client else "OFFLINE"
-)
-
-print(
-    "💾 MEMORY   : ONLINE"
-)
-
-print(
-    "👤 PROFILE  : ONLINE"
-)
-
-print(
-    "⚔️ SYSTEM   : ONLINE"
-)
-
-print()
-
-
-if memory:
-
-    print(
-        "💾 Previous conversation memory loaded."
-    )
-
-else:
-
-    print(
-        "💾 No previous conversation memory found."
-    )
-
-
-if profile:
-
-    print(
-        "👤 Abdul's profile loaded."
-    )
-
-
-print(
-    "⚔️ Player system loaded."
-)
-
-print()
-
-print(
-    f"📅 Today: {day_name}"
-)
-
-print(
-    f"📚 Learning: {learning_today}"
-)
-
-print(
-    f"⚔️ Training: {training_today}"
-)
-
-print()
-
-print(
-    "Bingo: Hello Abdul. I'm ready. ⚔️"
-)
-
-print()
-
-print(
-    "Commands:"
-)
-
-print(
-    "  /status   → Player status"
-)
-
-print(
-    "  /quest    → Today's quests"
-)
-
-print(
-    "  /complete → Complete quests"
-)
-
-print(
-    "  /schedule → Weekly schedule"
-)
-
-print(
-    "  later     → Reminder in 5 minutes"
-)
-
-print(
-    "  remind me in 10 minutes"
-)
-
-print(
-    "  exit      → Shut down Bingo"
-)
-
-print()
 
 
 
