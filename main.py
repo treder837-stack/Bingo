@@ -10,7 +10,7 @@ from kivy.uix.scrollview import ScrollView
 # from android.runnable import run_on_ui_thread
 # from android.permissions import request_permissions, Permission
 
-from google import genai
+#from google import genai
 import json
 import os
 import re
@@ -56,28 +56,6 @@ SYSTEM_FILE = "system.json"
 # =========================================================
 # 🤖 CONNECT TO GEMINI
 # =========================================================
-
-client = None
-
-if API_KEY.strip():
-
-    try:
-        client = genai.Client(
-            api_key=API_KEY
-        )
-
-        print()
-        print("🧠 Gemini client created successfully.")
-        print()
-
-    except Exception as error:
-
-        print()
-        print("❌ GEMINI CONNECTION ERROR")
-        print("------------------------------")
-        print(error)
-        print("------------------------------")
-        print()
 
 
 # =========================================================
