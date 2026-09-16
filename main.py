@@ -1776,7 +1776,7 @@ class BingoLayout(BoxLayout):
         )
 
         send_button.bind(
-    on_press=lambda instance: self.update_chat("✅ BUTTON TEST WORKING")
+    on_press=self.send_message
 )
 
         self.add_widget(
