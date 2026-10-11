@@ -12,6 +12,8 @@ package.domain = org.bingo
 # (str) Source directory
 source.dir = .
 
+source.include_exts = py,json,kv,png,jpg,atlas
+
 # (str) Main Python file
 source.main = main.py
 
