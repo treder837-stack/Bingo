@@ -19,6 +19,7 @@ from kivy.uix.label import Label
 from kivy.uix.progressbar import ProgressBar
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.textinput import TextInput
+from kivy.uix.popup import Popup
 
 try:
     from google import genai
@@ -29,7 +30,7 @@ except Exception:
 # CONFIG
 # ------------------------------------------------------------
 
-API_KEY = ""  # Put your Gemini API key here. Never share it.
+API_KEY = ""  # Keep empty; enter the key inside Bingo instead of committing it to GitHub.
 ASSISTANT_NAME = "Bingo"
 PLAYER_NAME = "Abdul"
 MODEL = "gemini-3.7-flash"
@@ -119,6 +120,39 @@ def save_json(path, value):
     try:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(value, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception:
+        return False
+
+def api_key_file_path():
+    """Store the key in this app's private Android data directory."""
+    try:
+        app = App.get_running_app()
+        if app is not None:
+            return os.path.join(app.user_data_dir, "bingo_api_config.json")
+    except Exception:
+        pass
+    # Development fallback only; the installed APK uses user_data_dir.
+    return os.path.join(BASE_DIR, "bingo_api_config.json")
+
+def get_api_key():
+    """Read the user's key from private app storage; never from source control."""
+    if API_KEY.strip():
+        return API_KEY.strip()
+    saved = load_json(api_key_file_path(), {})
+    if isinstance(saved, dict):
+        return str(saved.get("gemini_api_key", "")).strip()
+    return ""
+
+def store_api_key(value):
+    value = (value or "").strip()
+    if not value:
+        return False
+    path = api_key_file_path()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"gemini_api_key": value}, f)
         return True
     except Exception:
         return False
@@ -369,10 +403,11 @@ Safety:
 def ask_gemini(message):
     if genai is None:
         return "❌ Gemini package is not installed in this Pydroid environment."
-    if not API_KEY.strip():
-        return "❌ Gemini API key is empty. Put your key in API_KEY in main.py."
+    api_key = get_api_key()
+    if not api_key:
+        return "🔑 Gemini API key is not set yet. Tap API KEY, enter your key, and save it."
 
-    client = genai.Client(api_key=API_KEY.strip())
+    client = genai.Client(api_key=api_key)
     contents = memory[-20:] + [{"role": "user", "parts": [{"text": message}]}]
     last_error = None
     for model_name in [MODEL] + [m for m in FALLBACK_MODELS if m != MODEL]:
@@ -820,7 +855,7 @@ class BingoLayout(BoxLayout):
         # Two compact rows avoid cramped buttons on narrow phone screens.
         for button_specs in [
             [("SEND", self.send_message), ("STATUS", self.status_button), ("QUESTS", self.quests_button)],
-            [("TEST NOTICE", self.notification_button), ("ACTION TEST", self.action_notification_button), ("ALARM", self.alarm_button)],
+            [("API KEY", self.api_key_button), ("TEST NOTICE", self.notification_button), ("ACTION TEST", self.action_notification_button), ("ALARM", self.alarm_button)],
         ]:
             row = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(5))
             for text_value, callback in button_specs:
@@ -858,6 +893,44 @@ class BingoLayout(BoxLayout):
     def _ask_worker(self, message):
         answer = ask_gemini(message)
         self.add_message("⚔️ Bingo", answer)
+
+    def api_key_button(self, instance):
+        content = BoxLayout(orientation="vertical", spacing=dp(10), padding=dp(12))
+        info = Label(
+            text="Enter your Gemini API key. It is saved in Bingo's private app storage, not in GitHub.",
+            size_hint_y=None, height=dp(70), halign="left", valign="middle"
+        )
+        info.bind(size=lambda obj, value: setattr(obj, "text_size", value))
+        key_input = TextInput(
+            hint_text="Paste Gemini API key here", multiline=False,
+            password=True, size_hint_y=None, height=dp(48)
+        )
+        content.add_widget(info)
+        content.add_widget(key_input)
+        buttons = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(8))
+        save_btn = Button(text="SAVE KEY")
+        cancel_btn = Button(text="CANCEL")
+        buttons.add_widget(save_btn)
+        buttons.add_widget(cancel_btn)
+        content.add_widget(buttons)
+        popup = Popup(title="Bingo — Gemini API Key", content=content,
+                      size_hint=(0.92, None), height=dp(250), auto_dismiss=False)
+
+        def save_key(_button):
+            key = key_input.text.strip()
+            if not key:
+                self.add_message("⚔️ Bingo", "❌ Please enter a key first.")
+                return
+            if store_api_key(key):
+                key_input.text = ""
+                popup.dismiss()
+                self.add_message("⚔️ Bingo", "✅ API key saved in Bingo's private app storage. Send a message to test Gemini.")
+            else:
+                self.add_message("⚔️ Bingo", "❌ Could not save the key. Check app storage permissions and try again.")
+
+        save_btn.bind(on_press=save_key)
+        cancel_btn.bind(on_press=lambda _button: popup.dismiss())
+        popup.open()
 
     def status_button(self, instance):
         self.add_message("⚔️ Bingo", status_text())
