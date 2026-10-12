@@ -1,5 +1,5 @@
 # ============================================================
-# ⚔️ BINGO — SOLO SYSTEM v14.5 ACTION LAUNCH FIX
+# ⚔️ BINGO — SOLO SYSTEM v14.7 REST API + INPUT VISIBILITY FIX
 # Kivy + Gemini + Android notifications + background daily alarm
 # Designed for Pydroid 3 on Android
 # ============================================================
@@ -8,6 +8,8 @@ import json
 import os
 import re
 import threading
+import urllib.request
+import urllib.error
 from datetime import datetime, timedelta
 
 from kivy.app import App
@@ -21,11 +23,6 @@ from kivy.uix.scrollview import ScrollView
 from kivy.uix.textinput import TextInput
 from kivy.uix.popup import Popup
 
-try:
-    from google import genai
-except Exception:
-    genai = None
-
 # ------------------------------------------------------------
 # CONFIG
 # ------------------------------------------------------------
@@ -33,12 +30,8 @@ except Exception:
 API_KEY = ""  # Keep empty; enter the key inside Bingo instead of committing it to GitHub.
 ASSISTANT_NAME = "Bingo"
 PLAYER_NAME = "Abdul"
-MODEL = "gemini-3.7-flash"
-FALLBACK_MODELS = [
-    "gemini-3.8-flash",
-    "gemini-3.6-flash",
-    "gemini-3.5-flash",
-]
+MODEL = "gemini-2.5-flash"
+FALLBACK_MODELS = ["gemini-2.0-flash"]
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MEMORY_FILE = os.path.join(BASE_DIR, "bingo_memory.json")
@@ -401,31 +394,67 @@ Safety:
 """
 
 def ask_gemini(message):
-    if genai is None:
-        return "❌ Gemini package is not installed in this Pydroid environment."
     api_key = get_api_key()
     if not api_key:
         return "🔑 Gemini API key is not set yet. Tap API KEY, enter your key, and save it."
 
-    client = genai.Client(api_key=api_key)
-    contents = memory[-20:] + [{"role": "user", "parts": [{"text": message}]}]
+    # Use Google's HTTPS REST API directly; no google-genai package is required.
+    history = []
+    for item in memory[-20:]:
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role", "user")
+        parts = item.get("parts", [])
+        if role not in ("user", "model") or not isinstance(parts, list):
+            continue
+        valid_parts = [p for p in parts if isinstance(p, dict) and isinstance(p.get("text"), str)]
+        if valid_parts:
+            history.append({"role": role, "parts": valid_parts})
+    history.append({"role": "user", "parts": [{"text": message}]})
+
     last_error = None
     for model_name in [MODEL] + [m for m in FALLBACK_MODELS if m != MODEL]:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+        payload = {
+            "system_instruction": {"parts": [{"text": system_instruction()}]},
+            "contents": history,
+            "generationConfig": {"temperature": 0.7, "maxOutputTokens": 2048},
+        }
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
         try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=contents,
-                config={"system_instruction": system_instruction()},
-            )
-            answer = getattr(response, "text", None) or "I received an empty response."
+            with urllib.request.urlopen(request, timeout=45) as response:
+                result = json.loads(response.read().decode("utf-8"))
+            candidates = result.get("candidates", [])
+            answer = "".join(
+                part.get("text", "")
+                for part in (candidates[0].get("content", {}).get("parts", []) if candidates else [])
+                if isinstance(part, dict)
+            ).strip()
+            if not answer:
+                feedback = result.get("promptFeedback", {})
+                return "❌ Gemini returned no text. " + str(feedback or result.get("candidates", ""))[:500]
             memory.append({"role": "user", "parts": [{"text": message}]})
             memory.append({"role": "model", "parts": [{"text": answer}]})
             del memory[:-40]
             save_json(MEMORY_FILE, memory)
             return answer
+        except urllib.error.HTTPError as exc:
+            try:
+                detail = exc.read().decode("utf-8", errors="replace")
+            except Exception:
+                detail = str(exc)
+            last_error = f"HTTP {exc.code}: {detail[:700]}"
+            # Try the fallback model for model-specific errors; key/quota errors won't improve.
+            if exc.code in (400, 401, 403, 429):
+                break
         except Exception as exc:
-            last_error = exc
-    return f"❌ Gemini error: {last_error}"
+            last_error = f"{type(exc).__name__}: {exc}"
+    return f"❌ Gemini error: {last_error or 'Unknown connection error'}"
 
 # ------------------------------------------------------------
 # ANDROID NOTIFICATIONS
@@ -845,6 +874,11 @@ class BingoLayout(BoxLayout):
 
         self.message_box = TextInput(
             hint_text="Talk to Bingo...",
+            hint_text_color=(0.72, 0.74, 0.78, 1),
+            foreground_color=(1, 1, 1, 1),
+            background_color=(0.12, 0.13, 0.17, 1),
+            cursor_color=(1, 1, 1, 1),
+            selection_color=(0.2, 0.45, 0.8, 0.7),
             multiline=False,
             size_hint_y=None,
             height=dp(48),
@@ -902,8 +936,12 @@ class BingoLayout(BoxLayout):
         )
         info.bind(size=lambda obj, value: setattr(obj, "text_size", value))
         key_input = TextInput(
-            hint_text="Paste Gemini API key here", multiline=False,
-            password=True, size_hint_y=None, height=dp(48)
+            hint_text="Paste Gemini API key here",
+            hint_text_color=(0.72, 0.74, 0.78, 1),
+            foreground_color=(1, 1, 1, 1),
+            background_color=(0.12, 0.13, 0.17, 1),
+            cursor_color=(1, 1, 1, 1),
+            multiline=False, password=True, size_hint_y=None, height=dp(48)
         )
         content.add_widget(info)
         content.add_widget(key_input)
