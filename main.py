@@ -39,8 +39,8 @@ Window.softinput_mode = "below_target"
 API_KEY = ""  # Keep empty; enter the key inside Bingo instead of committing it to GitHub.
 ASSISTANT_NAME = "Bingo"
 PLAYER_NAME = "Abdul"
-MODEL = "gemini-2.5-flash"
-FALLBACK_MODELS = ["gemini-2.0-flash"]
+MODEL = "gemini-3.8-flash"
+FALLBACK_MODELS = ["gemini-3.6-flash", "gemini-2.5-flash"]
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MEMORY_FILE = os.path.join(BASE_DIR, "bingo_memory.json")
@@ -427,7 +427,7 @@ def ask_gemini(message):
         payload = {
             "system_instruction": {"parts": [{"text": system_instruction()}]},
             "contents": history,
-            "generationConfig": {"temperature": 0.7, "maxOutputTokens": 2048},
+            "generationConfig": {"maxOutputTokens": 2048},
         }
         request = urllib.request.Request(
             url,
