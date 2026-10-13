@@ -986,12 +986,15 @@ class BingoLayout(BoxLayout):
         try:
             if TTS_ENGINE is None:
                 return
-            TextToSpeech = __import__("jnius").autoclass("android.speech.tts.TextToSpeech")
+            jnius = __import__("jnius")
+            TextToSpeech = jnius.autoclass("android.speech.tts.TextToSpeech")
+            HashMap = jnius.autoclass("java.util.HashMap")
             text = self.last_bingo_reply.strip()
             # Android TTS handles long passages poorly; read a practical first section.
             if len(text) > 3500:
                 text = text[:3500] + ". The reply is longer, so I read the first part only."
-            TTS_ENGINE.speak(text, TextToSpeech.QUEUE_FLUSH, None, "bingo_reply")
+            # Use the String, int, HashMap overload supported by this Android TTS API.
+            TTS_ENGINE.speak(text, TextToSpeech.QUEUE_FLUSH, HashMap())
         except Exception as exc:
             self.add_message("⚔️ Bingo", "❌ Could not speak the reply: " + repr(exc))
 
