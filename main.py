@@ -10,11 +10,17 @@ import re
 import threading
 import urllib.request
 import urllib.error
+import ssl
+try:
+    import certifi
+except ImportError:
+    certifi = None
 from datetime import datetime, timedelta
 
 from kivy.app import App
 from kivy.clock import Clock, mainthread
 from kivy.metrics import dp
+from kivy.core.window import Window
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.label import Label
@@ -22,6 +28,9 @@ from kivy.uix.progressbar import ProgressBar
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.textinput import TextInput
 from kivy.uix.popup import Popup
+
+# Keep the focused message input visible when Android opens the keyboard.
+Window.softinput_mode = "below_target"
 
 # ------------------------------------------------------------
 # CONFIG
@@ -427,7 +436,11 @@ def ask_gemini(message):
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=45) as response:
+            with urllib.request.urlopen(
+                request,
+                timeout=45,
+                context=ssl.create_default_context(cafile=certifi.where()) if certifi else ssl.create_default_context(),
+            ) as response:
                 result = json.loads(response.read().decode("utf-8"))
             candidates = result.get("candidates", [])
             answer = "".join(
@@ -879,11 +892,11 @@ class BingoLayout(BoxLayout):
             background_color=(0.12, 0.13, 0.17, 1),
             cursor_color=(1, 1, 1, 1),
             selection_color=(0.2, 0.45, 0.8, 0.7),
-            multiline=False,
+            multiline=True,
             size_hint_y=None,
-            height=dp(48),
+            height=dp(58),
+            padding=(dp(10), dp(10)),
         )
-        self.message_box.bind(on_text_validate=self.send_message)
         self.add_widget(self.message_box)
 
         # Two compact rows avoid cramped buttons on narrow phone screens.
