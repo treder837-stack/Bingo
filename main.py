@@ -1,6 +1,6 @@
 # ============================================================
-# ⚔️ BINGO — SOLO SYSTEM v15.1 KEYBOARD SUGGESTIONS FIX
-# Kivy + Gemini + Android notifications + background daily alarm
+# ⚔️ BINGO — SOLO SYSTEM v15.3 VOICE OUTPUT
+# Kivy + Gemini + Android TTS voice output + notifications + background daily alarm
 # Designed for Pydroid 3 on Android; compact history + low thinking for faster replies
 # ============================================================
 
@@ -55,6 +55,8 @@ ANDROID_AVAILABLE = False
 notification_manager = None
 android_context = None
 APP_INSTANCE = None
+TTS_ENGINE = None
+TTS_LISTENER = None
 
 DAILY_QUEST_HOUR = 23
 DAILY_QUEST_MINUTE = 0
@@ -866,6 +868,7 @@ def command_response(message):
 class BingoLayout(BoxLayout):
     def __init__(self, **kwargs):
         super().__init__(orientation="vertical", padding=dp(10), spacing=dp(8), **kwargs)
+        self.last_bingo_reply = "Hello Abdul. I am ready."
 
         self.hud = Label(
             text="⚔️ BINGO SYSTEM",
@@ -915,7 +918,7 @@ class BingoLayout(BoxLayout):
 
         # Two compact rows avoid cramped buttons on narrow phone screens.
         for button_specs in [
-            [("SEND", self.send_message), ("STATUS", self.status_button), ("QUESTS", self.quests_button)],
+            [("SEND", self.send_message), ("SPEAK LAST", self.speak_last_button), ("STATUS", self.status_button), ("QUESTS", self.quests_button)],
             [("API KEY", self.api_key_button), ("TEST NOTICE", self.notification_button), ("ACTION TEST", self.action_notification_button), ("ALARM", self.alarm_button)],
         ]:
             row = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(5))
@@ -936,8 +939,61 @@ class BingoLayout(BoxLayout):
 
     @mainthread
     def add_message(self, sender, message):
+        if sender == "⚔️ Bingo":
+            self.last_bingo_reply = str(message)
         self.chat_label.text += f"\n\n{sender}: {message}"
         Clock.schedule_once(lambda dt: setattr(self.scroll, "scroll_y", 0), 0.05)
+
+    def speak_last_button(self, instance):
+        """Speak the most recent Bingo reply using Android's built-in TTS."""
+        global TTS_ENGINE, TTS_LISTENER, android_context
+        if not self.last_bingo_reply.strip():
+            self.add_message("⚔️ Bingo", "There is no reply to read aloud yet.")
+            return
+        try:
+            if not ANDROID_AVAILABLE or android_context is None:
+                self.add_message("⚔️ Bingo", "Voice output is available in the Android APK, not this desktop environment.")
+                return
+            if TTS_ENGINE is None:
+                from jnius import autoclass, PythonJavaClass, java_method
+                class OnInitListener(PythonJavaClass):
+                    __javainterfaces__ = ["android/speech/tts/TextToSpeech$OnInitListener"]
+                    __javacontext__ = "app"
+                    def __init__(self, layout):
+                        super().__init__()
+                        self.layout = layout
+                    @java_method("(I)V")
+                    def onInit(self, status):
+                        try:
+                            TextToSpeech = autoclass("android.speech.tts.TextToSpeech")
+                            if status == TextToSpeech.SUCCESS:
+                                Clock.schedule_once(lambda dt: self.layout._speak_now(), 0)
+                            else:
+                                Clock.schedule_once(lambda dt: self.layout.add_message("⚔️ Bingo", "Android text-to-speech could not initialize."), 0)
+                        except Exception as exc:
+                            Clock.schedule_once(lambda dt: self.layout.add_message("⚔️ Bingo", "Voice setup error: " + str(exc)), 0)
+                TTS_LISTENER = OnInitListener(self)
+                TextToSpeech = autoclass("android.speech.tts.TextToSpeech")
+                TTS_ENGINE = TextToSpeech(android_context, TTS_LISTENER)
+                self.add_message("⚔️ Bingo", "🔊 Starting voice output. Tap SPEAK LAST again in a moment if you hear nothing.")
+                return
+            self._speak_now()
+        except Exception as exc:
+            self.add_message("⚔️ Bingo", "❌ Voice output error: " + repr(exc))
+
+    def _speak_now(self):
+        global TTS_ENGINE
+        try:
+            if TTS_ENGINE is None:
+                return
+            TextToSpeech = __import__("jnius").autoclass("android.speech.tts.TextToSpeech")
+            text = self.last_bingo_reply.strip()
+            # Android TTS handles long passages poorly; read a practical first section.
+            if len(text) > 3500:
+                text = text[:3500] + ". The reply is longer, so I read the first part only."
+            TTS_ENGINE.speak(text, TextToSpeech.QUEUE_FLUSH, None, "bingo_reply")
+        except Exception as exc:
+            self.add_message("⚔️ Bingo", "❌ Could not speak the reply: " + repr(exc))
 
     def send_message(self, instance):
         message = self.message_box.text.strip()
