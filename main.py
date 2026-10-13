@@ -1,5 +1,5 @@
 # ============================================================
-# ⚔️ BINGO — SOLO SYSTEM v15.5 CONTINUOUS VOICE
+# ⚔️ BINGO — SOLO SYSTEM v15.6 UI-THREAD VOICE FIX
 # Kivy + Gemini + TTS + optional continuous speech recognition + notifications + alarm
 # Designed for Pydroid 3 on Android; compact history + low thinking for faster replies
 # ============================================================
@@ -28,6 +28,14 @@ from kivy.uix.progressbar import ProgressBar
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.textinput import TextInput
 from kivy.uix.popup import Popup
+
+# Android SpeechRecognizer APIs must run on Android's UI thread, which is
+# distinct from Kivy's Python thread. Fall back to identity off Android.
+try:
+    from android.runnable import run_on_ui_thread as android_ui_thread
+except Exception:
+    def android_ui_thread(func):
+        return func
 
 # Keep the focused message input visible when Android opens the keyboard.
 Window.softinput_mode = "below_target"
@@ -1005,7 +1013,7 @@ class BingoLayout(BoxLayout):
             self.add_message("⚔️ Bingo", "❌ Could not speak the reply: " + repr(exc))
 
     def toggle_continuous_listening(self, instance):
-        """Toggle continuous speech recognition; results are sent to Bingo one phrase at a time."""
+        """Start continuous recognition; Android SpeechRecognizer setup runs on UI thread."""
         if self.continuous_listening:
             self.stop_continuous_listening(instance)
             return
@@ -1013,7 +1021,7 @@ class BingoLayout(BoxLayout):
             self.add_message("⚔️ Bingo", "Continuous listening requires the Android app.")
             return
         try:
-            from jnius import autoclass, PythonJavaClass, java_method
+            from jnius import autoclass
             PythonActivity = autoclass("org.kivy.android.PythonActivity")
             activity = PythonActivity.mActivity
             activity.requestPermissions(["android.permission.RECORD_AUDIO"], 9022)
@@ -1021,59 +1029,79 @@ class BingoLayout(BoxLayout):
             if not SpeechRecognizer.isRecognitionAvailable(activity):
                 self.add_message("⚔️ Bingo", "Speech recognition is unavailable. Install or enable Google's speech recognition service, then try again.")
                 return
-
-            layout = self
-            class Listener(PythonJavaClass):
-                __javainterfaces__ = ["android/speech/RecognitionListener"]
-                __javacontext__ = "app"
-                def __init__(self):
-                    super().__init__()
-                @java_method("(Landroid/os/Bundle;)V")
-                def onReadyForSpeech(self, params):
-                    pass
-                @java_method("()V")
-                def onBeginningOfSpeech(self):
-                    pass
-                @java_method("(F)V")
-                def onRmsChanged(self, rmsdB):
-                    pass
-                @java_method("([B)V")
-                def onBufferReceived(self, buffer):
-                    pass
-                @java_method("()V")
-                def onEndOfSpeech(self):
-                    pass
-                @java_method("(I)V")
-                def onError(self, error):
-                    Clock.schedule_once(lambda dt: layout._speech_error(error), 0)
-                @java_method("(Landroid/os/Bundle;)V")
-                def onResults(self, results):
-                    try:
-                        arr = results.getStringArrayList("results_recognition")
-                        phrase = str(arr.get(0)) if arr is not None and arr.size() > 0 else ""
-                        Clock.schedule_once(lambda dt: layout._on_recognized_phrase(phrase), 0)
-                    except Exception as exc:
-                        Clock.schedule_once(lambda dt: layout.add_message("⚔️ Bingo", "Speech result error: " + str(exc)), 0)
-                @java_method("(Landroid/os/Bundle;)V")
-                def onPartialResults(self, partialResults):
-                    pass
-                @java_method("(ILandroid/os/Bundle;)V")
-                def onEvent(self, eventType, params):
-                    pass
-
-            global SPEECH_RECOGNIZER, SPEECH_LISTENER
-            if SPEECH_RECOGNIZER is None:
-                SPEECH_RECOGNIZER = SpeechRecognizer.createSpeechRecognizer(activity)
-                SPEECH_LISTENER = Listener()
-                SPEECH_RECOGNIZER.setRecognitionListener(SPEECH_LISTENER)
             self.continuous_listening = True
-            self.add_message("⚔️ Bingo", "🎙 Continuous listening is ON. Speak a phrase; tap STOP LISTENING to finish. For privacy, listening pauses while Bingo prepares a reply.")
-            Clock.schedule_once(lambda dt: self._start_speech_recognition(), 1.5)
+            self.add_message("⚔️ Bingo", "🎙 Starting continuous listening. Allow microphone access if Android asks.")
+            # Give Android a moment to display/resolve the runtime permission prompt.
+            Clock.schedule_once(lambda dt: self._create_speech_recognizer_ui(), 1.0)
         except Exception as exc:
             self.continuous_listening = False
-            self.add_message("⚔️ Bingo", "Could not start microphone: " + repr(exc) + ". Check microphone permission and the build permission settings.")
+            self.add_message("⚔️ Bingo", "Could not prepare microphone: " + repr(exc) + ". Check microphone permission and the build permission settings.")
+
+    @android_ui_thread
+    def _create_speech_recognizer_ui(self):
+        """Create/configure SpeechRecognizer on Android's actual application UI thread."""
+        global SPEECH_RECOGNIZER, SPEECH_LISTENER
+        if not self.continuous_listening:
+            return
+        try:
+            from jnius import autoclass, PythonJavaClass, java_method
+            PythonActivity = autoclass("org.kivy.android.PythonActivity")
+            activity = PythonActivity.mActivity
+            if SPEECH_RECOGNIZER is None:
+                layout = self
+                class Listener(PythonJavaClass):
+                    __javainterfaces__ = ["android/speech/RecognitionListener"]
+                    __javacontext__ = "app"
+                    def __init__(self):
+                        super().__init__()
+                    @java_method("(Landroid/os/Bundle;)V")
+                    def onReadyForSpeech(self, params):
+                        pass
+                    @java_method("()V")
+                    def onBeginningOfSpeech(self):
+                        pass
+                    @java_method("(F)V")
+                    def onRmsChanged(self, rmsdB):
+                        pass
+                    @java_method("([B)V")
+                    def onBufferReceived(self, buffer):
+                        pass
+                    @java_method("()V")
+                    def onEndOfSpeech(self):
+                        pass
+                    @java_method("(I)V")
+                    def onError(self, error):
+                        Clock.schedule_once(lambda dt: layout._speech_error(error), 0)
+                    @java_method("(Landroid/os/Bundle;)V")
+                    def onResults(self, results):
+                        try:
+                            arr = results.getStringArrayList("results_recognition")
+                            phrase = str(arr.get(0)) if arr is not None and arr.size() > 0 else ""
+                            Clock.schedule_once(lambda dt: layout._on_recognized_phrase(phrase), 0)
+                        except Exception as exc:
+                            Clock.schedule_once(lambda dt: layout.add_message("⚔️ Bingo", "Speech result error: " + str(exc)), 0)
+                    @java_method("(Landroid/os/Bundle;)V")
+                    def onPartialResults(self, partialResults):
+                        pass
+                    @java_method("(ILandroid/os/Bundle;)V")
+                    def onEvent(self, eventType, params):
+                        pass
+                SPEECH_LISTENER = Listener()
+                SPEECH_RECOGNIZER = autoclass("android.speech.SpeechRecognizer").createSpeechRecognizer(activity)
+                SPEECH_RECOGNIZER.setRecognitionListener(SPEECH_LISTENER)
+            self.add_message("⚔️ Bingo", "🎙 Continuous listening is ON. Speak a phrase; tap STOP LISTENING to finish. Listening pauses while Bingo prepares a reply.")
+            Clock.schedule_once(lambda dt: self._start_speech_recognition(), 0.2)
+        except Exception as exc:
+            self.continuous_listening = False
+            error_text = repr(exc)
+            Clock.schedule_once(lambda dt, msg=error_text: self.add_message("⚔️ Bingo", "Could not start microphone: " + msg), 0)
 
     def _start_speech_recognition(self):
+        # Schedule Android API call on Android UI thread; don't call from Kivy's thread.
+        self._start_speech_recognition_ui()
+
+    @android_ui_thread
+    def _start_speech_recognition_ui(self):
         global SPEECH_RECOGNIZER
         if not self.continuous_listening or self.voice_busy or SPEECH_RECOGNIZER is None:
             return
@@ -1088,8 +1116,8 @@ class BingoLayout(BoxLayout):
             intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
             SPEECH_RECOGNIZER.startListening(intent)
         except Exception as exc:
-            self.add_message("⚔️ Bingo", "Microphone listening error: " + repr(exc))
-            Clock.schedule_once(lambda dt: self._start_speech_recognition(), 1.5)
+            error_text = repr(exc)
+            Clock.schedule_once(lambda dt, msg=error_text: self.add_message("⚔️ Bingo", "Microphone listening error: " + msg), 0)
 
     def _on_recognized_phrase(self, phrase):
         phrase = (phrase or "").strip()
@@ -1132,18 +1160,22 @@ class BingoLayout(BoxLayout):
             Clock.schedule_once(lambda dt: self._start_speech_recognition(), 0.8)
 
     def stop_continuous_listening(self, instance):
-        global SPEECH_RECOGNIZER
         was_listening = self.continuous_listening
         self.continuous_listening = False
         self.voice_busy = False
+        self._stop_speech_recognizer_ui()
+        if was_listening:
+            self.add_message("⚔️ Bingo", "🛑 Continuous listening stopped. The microphone will not restart unless you tap LISTEN CONTINUOUSLY again.")
+
+    @android_ui_thread
+    def _stop_speech_recognizer_ui(self):
+        global SPEECH_RECOGNIZER
         try:
             if SPEECH_RECOGNIZER is not None:
                 SPEECH_RECOGNIZER.stopListening()
                 SPEECH_RECOGNIZER.cancel()
         except Exception:
             pass
-        if was_listening:
-            self.add_message("⚔️ Bingo", "🛑 Continuous listening stopped. The microphone will not restart unless you tap LISTEN CONTINUOUSLY again.")
 
     def send_message(self, instance):
         message = self.message_box.text.strip()
