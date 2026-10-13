@@ -1,7 +1,7 @@
 # ============================================================
-# ⚔️ BINGO — SOLO SYSTEM v14.7 REST API + INPUT VISIBILITY FIX
+# ⚔️ BINGO — SOLO SYSTEM v15.1 KEYBOARD SUGGESTIONS FIX
 # Kivy + Gemini + Android notifications + background daily alarm
-# Designed for Pydroid 3 on Android
+# Designed for Pydroid 3 on Android; compact history + low thinking for faster replies
 # ============================================================
 
 import json
@@ -408,15 +408,21 @@ def ask_gemini(message):
         return "🔑 Gemini API key is not set yet. Tap API KEY, enter your key, and save it."
 
     # Use Google's HTTPS REST API directly; no google-genai package is required.
+    # Send only the latest 8 messages (about 4 exchanges) to reduce prompt size.
+    # The full local memory is still saved below; only the API context is shortened.
     history = []
-    for item in memory[-20:]:
+    for item in memory[-8:]:
         if not isinstance(item, dict):
             continue
         role = item.get("role", "user")
         parts = item.get("parts", [])
         if role not in ("user", "model") or not isinstance(parts, list):
             continue
-        valid_parts = [p for p in parts if isinstance(p, dict) and isinstance(p.get("text"), str)]
+        valid_parts = []
+        for part in parts:
+            if isinstance(part, dict) and isinstance(part.get("text"), str):
+                # Avoid sending huge old messages repeatedly.
+                valid_parts.append({"text": part["text"][-2400:]})
         if valid_parts:
             history.append({"role": role, "parts": valid_parts})
     history.append({"role": "user", "parts": [{"text": message}]})
@@ -427,8 +433,11 @@ def ask_gemini(message):
         payload = {
             "system_instruction": {"parts": [{"text": system_instruction()}]},
             "contents": history,
-            "generationConfig": {"maxOutputTokens": 2048},
+            # Low thinking reduces latency for everyday chat while retaining reasoning.
+            "generationConfig": {"maxOutputTokens": 1536},
         }
+        if model_name.startswith("gemini-3."):
+            payload["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "low"}
         request = urllib.request.Request(
             url,
             data=json.dumps(payload).encode("utf-8"),
@@ -438,7 +447,7 @@ def ask_gemini(message):
         try:
             with urllib.request.urlopen(
                 request,
-                timeout=45,
+                timeout=35,
                 context=ssl.create_default_context(cafile=certifi.where()) if certifi else ssl.create_default_context(),
             ) as response:
                 result = json.loads(response.read().decode("utf-8"))
@@ -892,6 +901,9 @@ class BingoLayout(BoxLayout):
             background_color=(0.12, 0.13, 0.17, 1),
             cursor_color=(1, 1, 1, 1),
             selection_color=(0.2, 0.45, 0.8, 0.7),
+            # Ask Android/Gboard to use normal text input with word suggestions.
+            input_type="text",
+            keyboard_suggestions=True,
             multiline=True,
             size_hint_y=None,
             height=dp(58),
