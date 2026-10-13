@@ -18,7 +18,7 @@ source.include_exts = py,json,kv,png,jpg,atlas
 source.main = main.py
 
 # (list) Application requirements
-requirements = python3,kivy,pyjnius,google-genai
+requirements = python3,kivy,pyjnius,certifi
 
 # (str) Application version
 version = 1.0
