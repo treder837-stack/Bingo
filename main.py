@@ -40,7 +40,7 @@ API_KEY = ""  # Keep empty; enter the key inside Bingo instead of committing it 
 ASSISTANT_NAME = "Bingo"
 PLAYER_NAME = "Abdul"
 MODEL = "gemini-3.8-flash"
-FALLBACK_MODELS = ["gemini-3.6-flash", "gemini-2.5-flash"]
+FALLBACK_MODELS = ["gemini-3.6-flash", "gemini-3.5-flash-lite"]
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MEMORY_FILE = os.path.join(BASE_DIR, "bingo_memory.json")
@@ -428,7 +428,9 @@ def ask_gemini(message):
     history.append({"role": "user", "parts": [{"text": message}]})
 
     last_error = None
+    last_model = MODEL
     for model_name in [MODEL] + [m for m in FALLBACK_MODELS if m != MODEL]:
+        last_model = model_name
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
         payload = {
             "system_instruction": {"parts": [{"text": system_instruction()}]},
@@ -471,12 +473,12 @@ def ask_gemini(message):
             except Exception:
                 detail = str(exc)
             last_error = f"HTTP {exc.code}: {detail[:700]}"
-            # Try the fallback model for model-specific errors; key/quota errors won't improve.
+            # Try only currently recommended Gemini 3 models; avoid restricted Gemini 2.5 fallback.
             if exc.code in (400, 401, 403, 429):
                 break
         except Exception as exc:
             last_error = f"{type(exc).__name__}: {exc}"
-    return f"❌ Gemini error: {last_error or 'Unknown connection error'}"
+    return f"❌ Gemini error (last model: {last_model}): {last_error or 'Unknown connection error'}"
 
 # ------------------------------------------------------------
 # ANDROID NOTIFICATIONS
