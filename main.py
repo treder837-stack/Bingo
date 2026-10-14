@@ -1,5 +1,5 @@
 # ============================================================
-# ⚔️ BINGO — SOLO SYSTEM v15.7 SMART PERSISTENT MEMORY
+# ⚔️ BINGO — SOLO SYSTEM v15.9 SMART MEMORY
 # Kivy + Gemini + TTS + optional continuous speech recognition + notifications + alarm
 # Designed for Pydroid 3 on Android; compact history + low thinking for faster replies
 # ============================================================
@@ -203,33 +203,84 @@ def save_pending_memory():
     with _memory_lock:
         return save_json(PENDING_MEMORY_FILE, pending_memory)
 
+def _memory_update_payload(item):
+    """Decode an update proposal while remaining compatible with old string suggestions."""
+    prefix = "__BINGO_MEMORY_UPDATE__:"
+    if not isinstance(item, str) or not item.startswith(prefix):
+        return None
+    try:
+        data = json.loads(item[len(prefix):])
+        if isinstance(data, dict) and data.get("old") and data.get("new"):
+            return data
+    except Exception:
+        pass
+    return None
+
+def _memory_suggestion_label(item):
+    update = _memory_update_payload(item)
+    if update:
+        return f"UPDATE saved memory: {update['old']}  →  {update['new']}"
+    return item
+
+def _clean_memory_candidate(text):
+    text = re.sub(r"\s+", " ", (text or "")).strip(" .\t\n")
+    text = re.sub(r"^(?:actually[, ]+|correction[:, ]+|update[:, ]+|to clarify[, ]+)", "", text, flags=re.I)
+    text = re.sub(r"^(?:please remember for future(?: conversations)?[:, ]*)", "", text, flags=re.I)
+    return text.strip(" .")
+
 def suggest_memory_from_message(message):
-    """Queue only clear preference/goal/project statements for user approval.
-    This deliberately avoids auto-saving arbitrary chat or sensitive personal data.
-    """
+    """Suggest useful facts and explicit corrections; nothing is saved without approval."""
     text = re.sub(r"\s+", " ", (message or "")).strip(" .\t\n")
     if not text or len(text) > 240 or len(text.split()) < 4:
         return None
-    # Explicit memory commands are already handled by command_response.
-    if re.match(r"^(remember|forget|memories)\b", text, re.I):
+    if re.match(r"^(remember|forget|memories|memory suggestions|approve memory|reject memory)\b", text, re.I):
         return None
-    patterns = [
-        r"^(?:I prefer|I like|I love|I learn better with|I want to learn|my goal is|my goal is to|I'm learning|I am learning|I'm building|I am building|I'm working on|I am working on|my project is|please usually)\b",
-        r"^(?:for future conversations,? )?(?:please )?(?:use|give me|explain to me) (?:step-by-step|simple explanations|short answers|detailed answers)\b",
-    ]
-    if not any(re.search(p, text, re.I) for p in patterns):
-        return None
-    # Do not propose secrets or highly sensitive information for long-term storage.
+
+    # Never propose credentials or highly sensitive personal details for storage.
     sensitive = re.compile(r"\b(password|passcode|api key|secret key|bank account|credit card|otp|one-time password|medical diagnosis|my religion|sexual orientation)\b", re.I)
     if sensitive.search(text):
         return None
-    fact = " ".join(text.split())
+
+    correction = bool(re.match(r"^(?:actually\b|correction\b|update\b|to clarify\b|I no longer\b|I don't .* anymore\b|I do not .* anymore\b|I now prefer\b)", text, re.I))
+    fact = _clean_memory_candidate(text)
+    if not fact or len(fact.split()) < 4:
+        return None
+
+    patterns = [
+        r"^(?:I prefer|I like|I love|I learn better with|I want to learn|my goal is|my goal is to|I'm learning|I am learning|I'm building|I am building|I'm working on|I am working on|my project is|please usually|I study|I am studying|I'm studying|I work|I am working|I use|I usually|I don't like|I do not like|I dislike|I find it easier when|I struggle with|I am interested in|I'm interested in|I plan to|I hope to|my current focus is)\b",
+        r"^(?:for future conversations,? )?(?:please )?(?:use|give me|explain to me) (?:step-by-step|simple explanations|short answers|detailed answers)\b",
+    ]
+    if not correction and not any(re.search(p, fact, re.I) for p in patterns):
+        return None
     if len(fact) > 220:
         fact = fact[:217].rsplit(" ", 1)[0] + "..."
+
     with _memory_lock:
         if any(f.casefold() == fact.casefold() for f in long_term_memory):
             return None
-        if any(f.casefold() == fact.casefold() for f in pending_memory):
+        # If the user clearly signals a correction, propose replacing the closest
+        # related fact rather than silently creating contradictory memories.
+        if correction and long_term_memory:
+            stop = {"actually", "correction", "update", "clarify", "i", "am", "im", "the", "a", "an", "and", "or", "to", "of", "for", "my", "me", "is", "are", "was", "with", "no", "longer", "now", "prefer", "like", "want", "don't", "not"}
+            new_words = {w.casefold() for w in re.findall(r"[a-zA-Z0-9]+", fact) if len(w) > 2 and w.casefold() not in stop}
+            best = None
+            best_score = 0.0
+            for old in long_term_memory:
+                old_words = {w.casefold() for w in re.findall(r"[a-zA-Z0-9]+", old) if len(w) > 2 and w.casefold() not in stop}
+                score = len(new_words & old_words) / max(1, len(new_words | old_words))
+                if score > best_score:
+                    best, best_score = old, score
+            if best and best_score >= 0.18:
+                proposal = "__BINGO_MEMORY_UPDATE__:" + json.dumps({"old": best, "new": fact}, ensure_ascii=False)
+                if any(x.casefold() == proposal.casefold() for x in pending_memory):
+                    return None
+                pending_memory.append(proposal)
+                del pending_memory[:-20]
+                if not save_pending_memory():
+                    pending_memory.pop()
+                    return None
+                return "UPDATE: " + best + " → " + fact
+        if any((_memory_update_payload(x) or {}).get("new", x).casefold() == fact.casefold() for x in pending_memory):
             return None
         pending_memory.append(fact)
         del pending_memory[:-20]
@@ -241,8 +292,8 @@ def suggest_memory_from_message(message):
 def pending_memory_text():
     with _memory_lock:
         if not pending_memory:
-            return "🧠 MEMORY SUGGESTIONS\n\nNo pending suggestions. Bingo may suggest a preference, goal, or project for you to approve."
-        return "🧠 MEMORY SUGGESTIONS — NOT SAVED YET\n\n" + "\n".join(f"{i}. {fact}" for i, fact in enumerate(pending_memory, 1)) + "\n\nApprove with: approve memory 1\nReject with: reject memory 1"
+            return "🧠 MEMORY SUGGESTIONS\n\nNo pending suggestions. Bingo may suggest a preference, goal, project, or correction for you to approve."
+        return "🧠 MEMORY SUGGESTIONS — NOT SAVED YET\n\n" + "\n".join(f"{i}. {_memory_suggestion_label(item)}" for i, item in enumerate(pending_memory, 1)) + "\n\nApprove with: approve memory 1\nReject with: reject memory 1"
 
 def resolve_memory_suggestion(action, number_text):
     if not number_text.isdigit():
@@ -251,16 +302,36 @@ def resolve_memory_suggestion(action, number_text):
     with _memory_lock:
         if idx < 0 or idx >= len(pending_memory):
             return "That suggestion number doesn't exist. Type 'memory suggestions' to see the current list."
-        fact = pending_memory[idx]
+        item = pending_memory[idx]
+        update = _memory_update_payload(item)
         if action == "approve":
-            ok, message = remember_fact(fact)
-            if not ok:
-                return message
+            if update:
+                old = list(long_term_memory)
+                try:
+                    old_idx = next(i for i, fact in enumerate(long_term_memory) if fact.casefold() == update["old"].casefold())
+                except StopIteration:
+                    # The original fact may already have been changed or deleted.
+                    ok, message = remember_fact(update["new"])
+                    if not ok:
+                        return message
+                else:
+                    long_term_memory[old_idx] = update["new"]
+                    if not save_long_term_memory():
+                        long_term_memory[:] = old
+                        return "Couldn't update long-term memory storage. Please try again."
+            else:
+                ok, message = remember_fact(item)
+                if not ok:
+                    return message
         pending_memory.pop(idx)
         if not save_pending_memory():
-            pending_memory.insert(idx, fact)
+            pending_memory.insert(idx, item)
             return "Couldn't update the suggestion file. Please try again."
-    return ("Saved approved memory: " + fact) if action == "approve" else ("Rejected suggestion: " + fact)
+    if action != "approve":
+        return "Rejected suggestion: " + _memory_suggestion_label(item)
+    if update:
+        return "🧠 Updated saved memory: " + update["old"] + " → " + update["new"]
+    return "🧠 Saved approved memory: " + item
 
 def save_long_term_memory():
     """Persist long-term facts independently of the rolling chat history."""
@@ -946,6 +1017,25 @@ def command_response(message):
     match = re.match(r"^(approve|reject)\s+memory\s+(\d+)\s*$", cmd)
     if match:
         return resolve_memory_suggestion(match.group(1), match.group(2))
+    update_cmd = re.match(r"^update memory (\d+) to (.+)$", raw, re.I)
+    if update_cmd:
+        idx = int(update_cmd.group(1)) - 1
+        new_fact = re.sub(r"\s+", " ", update_cmd.group(2)).strip(" .")
+        with _memory_lock:
+            if idx < 0 or idx >= len(long_term_memory):
+                return "That saved memory number doesn't exist. Type 'memories' to see the list."
+            if not new_fact:
+                return "Please provide the new fact after 'to'."
+            if len(new_fact) > 500:
+                return "That update is too long. Keep a saved fact under 500 characters."
+            old_fact = long_term_memory[idx]
+            if any(i != idx and item.casefold() == new_fact.casefold() for i, item in enumerate(long_term_memory)):
+                return "That fact is already saved elsewhere. No change made."
+            long_term_memory[idx] = new_fact
+            if not save_long_term_memory():
+                long_term_memory[idx] = old_fact
+                return "I couldn't update storage. Please try again."
+        return f"🧠 Updated memory {idx + 1}: {old_fact} → {new_fact}"
     if cmd in ("forget memory", "/forget memory", "forget all memory", "clear long-term memory", "clear memory"):
         return forget_memory("all")
     if cmd.startswith("forget ") or cmd.startswith("/forget "):
