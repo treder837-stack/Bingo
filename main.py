@@ -1,7 +1,7 @@
 # ============================================================
-# ⚔️ BINGO — SOLO SYSTEM v15.9 SMART MEMORY
+# ⚔️ BINGO — SOLO SYSTEM v16.1 STREAMING RESPONSES + SMART MEMORY
 # Kivy + Gemini + TTS + optional continuous speech recognition + notifications + alarm
-# Designed for Pydroid 3 on Android; compact history + low thinking for faster replies
+# Designed for Pydroid 3 on Android; small context + low thinking + lightweight model for faster replies
 # ============================================================
 
 import json
@@ -47,8 +47,8 @@ Window.softinput_mode = "below_target"
 API_KEY = ""  # Keep empty; enter the key inside Bingo instead of committing it to GitHub.
 ASSISTANT_NAME = "Bingo"
 PLAYER_NAME = "Abdul"
-MODEL = "gemini-3.8-flash"
-FALLBACK_MODELS = ["gemini-3.6-flash", "gemini-3.5-flash-lite"]
+MODEL = "gemini-3.5-flash-lite"  # Lightweight primary model for faster everyday replies
+FALLBACK_MODELS = ["gemini-3.6-flash", "gemini-3.8-flash"]
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MEMORY_FILE = os.path.join(BASE_DIR, "bingo_memory.json")  # Short conversation history
@@ -613,7 +613,7 @@ Safety:
 - Martial arts: fitness, concepts, discipline and safety.
 """
 
-def ask_gemini(message):
+def ask_gemini(message, on_chunk=None):
     api_key = get_api_key()
     if not api_key:
         return "🔑 Gemini API key is not set yet. Tap API KEY, enter your key, and save it."
@@ -622,7 +622,7 @@ def ask_gemini(message):
     # Send only the latest 8 messages (about 4 exchanges) to reduce prompt size.
     # The full local memory is still saved below; only the API context is shortened.
     history = []
-    for item in memory[-8:]:
+    for item in memory[-4:]:  # Keep only the latest two exchanges for lower latency
         if not isinstance(item, dict):
             continue
         role = item.get("role", "user")
@@ -633,7 +633,7 @@ def ask_gemini(message):
         for part in parts:
             if isinstance(part, dict) and isinstance(part.get("text"), str):
                 # Avoid sending huge old messages repeatedly.
-                valid_parts.append({"text": part["text"][-2400:]})
+                valid_parts.append({"text": part["text"][-1200:]})
         if valid_parts:
             history.append({"role": role, "parts": valid_parts})
     history.append({"role": "user", "parts": [{"text": message}]})
@@ -642,12 +642,13 @@ def ask_gemini(message):
     last_model = MODEL
     for model_name in [MODEL] + [m for m in FALLBACK_MODELS if m != MODEL]:
         last_model = model_name
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+        # Stream tokens as they are generated so the user sees progress immediately.
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:streamGenerateContent?alt=sse&key={api_key}"
         payload = {
             "system_instruction": {"parts": [{"text": system_instruction()}]},
             "contents": history,
             # Low thinking reduces latency for everyday chat while retaining reasoning.
-            "generationConfig": {"maxOutputTokens": 1536},
+            "generationConfig": {"maxOutputTokens": 700},  # Smaller answers return sooner
         }
         if model_name.startswith("gemini-3."):
             payload["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "low"}
@@ -658,18 +659,31 @@ def ask_gemini(message):
             method="POST",
         )
         try:
+            chunks = []
             with urllib.request.urlopen(
                 request,
-                timeout=35,
+                timeout=45,
                 context=ssl.create_default_context(cafile=certifi.where()) if certifi else ssl.create_default_context(),
             ) as response:
-                result = json.loads(response.read().decode("utf-8"))
-            candidates = result.get("candidates", [])
-            answer = "".join(
-                part.get("text", "")
-                for part in (candidates[0].get("content", {}).get("parts", []) if candidates else [])
-                if isinstance(part, dict)
-            ).strip()
+                for raw_line in response:
+                    line = raw_line.decode("utf-8", errors="replace").strip()
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if not data or data == "[DONE]":
+                        continue
+                    try:
+                        event = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+                    candidates = event.get("candidates", [])
+                    parts = candidates[0].get("content", {}).get("parts", []) if candidates else []
+                    for part in parts:
+                        if isinstance(part, dict) and isinstance(part.get("text"), str):
+                            chunks.append(part["text"])
+                    if chunks and callable(on_chunk):
+                        on_chunk("".join(chunks))
+            answer = "".join(chunks).strip()
             if not answer:
                 feedback = result.get("promptFeedback", {})
                 return "❌ Gemini returned no text. " + str(feedback or result.get("candidates", ""))[:500]
@@ -1197,6 +1211,17 @@ class BingoLayout(BoxLayout):
         self.chat_label.text += f"\n\n{sender}: {message}"
         Clock.schedule_once(lambda dt: setattr(self.scroll, "scroll_y", 0), 0.05)
 
+    @mainthread
+    def update_streaming_reply(self, text):
+        """Update the in-progress Bingo reply on Kivy's main thread."""
+        old_display = getattr(self, "_streaming_display", "\n\n⚔️ Bingo: ⏳ Thinking...")
+        new_display = "\n\n⚔️ Bingo: " + (text if text else "⏳ Thinking...")
+        if old_display in self.chat_label.text:
+            self.chat_label.text = self.chat_label.text.rsplit(old_display, 1)[0] + new_display
+        self._streaming_display = new_display
+        self.last_bingo_reply = text
+        Clock.schedule_once(lambda dt: setattr(self.scroll, "scroll_y", 0), 0.02)
+
     def speak_last_button(self, instance):
         """Speak the most recent Bingo reply using Android's built-in TTS."""
         global TTS_ENGINE, TTS_LISTENER, android_context
@@ -1429,14 +1454,16 @@ class BingoLayout(BoxLayout):
         if quick is not None:
             self.add_message("⚔️ Bingo", quick)
             return
+        self._streaming_display = "\n\n⚔️ Bingo: ⏳ Thinking..."
+        self.add_message("⚔️ Bingo", "⏳ Thinking...")
         threading.Thread(target=self._ask_worker, args=(message,), daemon=True).start()
 
     def _ask_worker(self, message):
-        answer = ask_gemini(message)
+        answer = ask_gemini(message, on_chunk=self.update_streaming_reply)
         suggestion = suggest_memory_from_message(message)
         if suggestion:
             answer += "\n\n🧠 Memory suggestion (not saved): \"" + suggestion + "\"\nType 'memory suggestions', then 'approve memory 1' or 'reject memory 1'."
-        self.add_message("⚔️ Bingo", answer)
+        self.update_streaming_reply(answer)
 
     def api_key_button(self, instance):
         content = BoxLayout(orientation="vertical", spacing=dp(10), padding=dp(12))
