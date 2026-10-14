@@ -53,6 +53,7 @@ FALLBACK_MODELS = ["gemini-3.6-flash", "gemini-3.5-flash-lite"]
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MEMORY_FILE = os.path.join(BASE_DIR, "bingo_memory.json")  # Short conversation history
 LONG_TERM_MEMORY_FILE = os.path.join(BASE_DIR, "bingo_long_term_memory.json")
+PENDING_MEMORY_FILE = os.path.join(BASE_DIR, "bingo_memory_suggestions.json")
 PROFILE_FILE = os.path.join(BASE_DIR, "profile.json")
 SYSTEM_FILE = os.path.join(BASE_DIR, "system.json")
 
@@ -192,7 +193,74 @@ long_term_memory = load_json(LONG_TERM_MEMORY_FILE, [])
 if not isinstance(long_term_memory, list):
     long_term_memory = []
 long_term_memory = [str(item).strip() for item in long_term_memory if isinstance(item, str) and item.strip()][:100]
+pending_memory = load_json(PENDING_MEMORY_FILE, [])
+if not isinstance(pending_memory, list):
+    pending_memory = []
+pending_memory = [str(item).strip() for item in pending_memory if isinstance(item, str) and item.strip()][:20]
 _memory_lock = threading.RLock()
+
+def save_pending_memory():
+    with _memory_lock:
+        return save_json(PENDING_MEMORY_FILE, pending_memory)
+
+def suggest_memory_from_message(message):
+    """Queue only clear preference/goal/project statements for user approval.
+    This deliberately avoids auto-saving arbitrary chat or sensitive personal data.
+    """
+    text = re.sub(r"\s+", " ", (message or "")).strip(" .\t\n")
+    if not text or len(text) > 240 or len(text.split()) < 4:
+        return None
+    # Explicit memory commands are already handled by command_response.
+    if re.match(r"^(remember|forget|memories)\b", text, re.I):
+        return None
+    patterns = [
+        r"^(?:I prefer|I like|I love|I learn better with|I want to learn|my goal is|my goal is to|I'm learning|I am learning|I'm building|I am building|I'm working on|I am working on|my project is|please usually)\b",
+        r"^(?:for future conversations,? )?(?:please )?(?:use|give me|explain to me) (?:step-by-step|simple explanations|short answers|detailed answers)\b",
+    ]
+    if not any(re.search(p, text, re.I) for p in patterns):
+        return None
+    # Do not propose secrets or highly sensitive information for long-term storage.
+    sensitive = re.compile(r"\b(password|passcode|api key|secret key|bank account|credit card|otp|one-time password|medical diagnosis|my religion|sexual orientation)\b", re.I)
+    if sensitive.search(text):
+        return None
+    fact = " ".join(text.split())
+    if len(fact) > 220:
+        fact = fact[:217].rsplit(" ", 1)[0] + "..."
+    with _memory_lock:
+        if any(f.casefold() == fact.casefold() for f in long_term_memory):
+            return None
+        if any(f.casefold() == fact.casefold() for f in pending_memory):
+            return None
+        pending_memory.append(fact)
+        del pending_memory[:-20]
+        if not save_pending_memory():
+            pending_memory.pop()
+            return None
+    return fact
+
+def pending_memory_text():
+    with _memory_lock:
+        if not pending_memory:
+            return "🧠 MEMORY SUGGESTIONS\n\nNo pending suggestions. Bingo may suggest a preference, goal, or project for you to approve."
+        return "🧠 MEMORY SUGGESTIONS — NOT SAVED YET\n\n" + "\n".join(f"{i}. {fact}" for i, fact in enumerate(pending_memory, 1)) + "\n\nApprove with: approve memory 1\nReject with: reject memory 1"
+
+def resolve_memory_suggestion(action, number_text):
+    if not number_text.isdigit():
+        return "Use a suggestion number, for example: " + action + " memory 1"
+    idx = int(number_text) - 1
+    with _memory_lock:
+        if idx < 0 or idx >= len(pending_memory):
+            return "That suggestion number doesn't exist. Type 'memory suggestions' to see the current list."
+        fact = pending_memory[idx]
+        if action == "approve":
+            ok, message = remember_fact(fact)
+            if not ok:
+                return message
+        pending_memory.pop(idx)
+        if not save_pending_memory():
+            pending_memory.insert(idx, fact)
+            return "Couldn't update the suggestion file. Please try again."
+    return ("Saved approved memory: " + fact) if action == "approve" else ("Rejected suggestion: " + fact)
 
 def save_long_term_memory():
     """Persist long-term facts independently of the rolling chat history."""
@@ -873,6 +941,11 @@ def command_response(message):
     # Explicit, user-controlled persistent memory commands.
     if cmd in ("memories", "/memories", "show memory", "show memories", "what do you remember"):
         return long_term_memory_text()
+    if cmd in ("memory suggestions", "suggested memories", "pending memories", "/memory suggestions"):
+        return pending_memory_text()
+    match = re.match(r"^(approve|reject)\s+memory\s+(\d+)\s*$", cmd)
+    if match:
+        return resolve_memory_suggestion(match.group(1), match.group(2))
     if cmd in ("forget memory", "/forget memory", "forget all memory", "clear long-term memory", "clear memory"):
         return forget_memory("all")
     if cmd.startswith("forget ") or cmd.startswith("/forget "):
@@ -1215,6 +1288,9 @@ class BingoLayout(BoxLayout):
 
     def _ask_voice_worker(self, message):
         answer = ask_gemini(message)
+        suggestion = suggest_memory_from_message(message)
+        if suggestion:
+            answer += "\n\n🧠 Memory suggestion (not saved): \"" + suggestion + "\"\nSay or type 'memory suggestions', then 'approve memory 1' or 'reject memory 1'."
         self.add_message("⚔️ Bingo", answer)
         self.last_bingo_reply = str(answer)
         Clock.schedule_once(lambda dt: self._speak_voice_answer(), 0)
@@ -1267,6 +1343,9 @@ class BingoLayout(BoxLayout):
 
     def _ask_worker(self, message):
         answer = ask_gemini(message)
+        suggestion = suggest_memory_from_message(message)
+        if suggestion:
+            answer += "\n\n🧠 Memory suggestion (not saved): \"" + suggestion + "\"\nType 'memory suggestions', then 'approve memory 1' or 'reject memory 1'."
         self.add_message("⚔️ Bingo", answer)
 
     def api_key_button(self, instance):
