@@ -1,7 +1,7 @@
 # ============================================================
-# ⚔️ BINGO — SOLO SYSTEM v16.3 SMART BRAIN UPGRADE
+# ⚔️ BINGO — SOLO SYSTEM v16.4 PERSONAL AI UPGRADE
 # Kivy + Gemini + TTS + optional continuous speech recognition + notifications + alarm
-# Adds relevant memory recall, follow-up awareness, adaptive response style, and clearer error handling
+# Combines memory recall, follow-up awareness, adaptive responses, voice output, and daily-system context
 # ============================================================
 
 import json
@@ -1189,6 +1189,7 @@ class BingoLayout(BoxLayout):
         self.last_bingo_reply = "Hello Abdul. I am ready."
         self.continuous_listening = False
         self.voice_busy = False
+        self.auto_speak = False
         self._speech_restart_event = None
 
         self.hud = Label(
@@ -1241,7 +1242,7 @@ class BingoLayout(BoxLayout):
         for button_specs in [
             [("SEND", self.send_message), ("SPEAK LAST", self.speak_last_button), ("STATUS", self.status_button), ("QUESTS", self.quests_button)],
             [("API KEY", self.api_key_button), ("TEST NOTICE", self.notification_button), ("ACTION TEST", self.action_notification_button), ("ALARM", self.alarm_button)],
-            [("🎙 LISTEN CONTINUOUSLY", self.toggle_continuous_listening), ("STOP LISTENING", self.stop_continuous_listening)],
+            [("🎙 LISTEN CONTINUOUSLY", self.toggle_continuous_listening), ("STOP LISTENING", self.stop_continuous_listening), ("AUTO SPEAK: OFF", self.toggle_auto_speak)],
         ]:
             row = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(5))
             for text_value, callback in button_specs:
@@ -1276,6 +1277,14 @@ class BingoLayout(BoxLayout):
         self._streaming_display = new_display
         self.last_bingo_reply = text
         Clock.schedule_once(lambda dt: setattr(self.scroll, "scroll_y", 0), 0.02)
+
+    def toggle_auto_speak(self, instance):
+        """Toggle optional automatic reading of completed Bingo replies."""
+        self.auto_speak = not self.auto_speak
+        if instance is not None:
+            instance.text = "AUTO SPEAK: ON" if self.auto_speak else "AUTO SPEAK: OFF"
+        state = "enabled" if self.auto_speak else "disabled"
+        self.add_message("⚔️ Bingo", f"🔊 Automatic voice replies {state}. You can still use SPEAK LAST anytime.")
 
     def speak_last_button(self, instance):
         """Speak the most recent Bingo reply using Android's built-in TTS."""
@@ -1530,6 +1539,9 @@ class BingoLayout(BoxLayout):
         if suggestion:
             answer += "\n\n🧠 Memory suggestion (not saved): \"" + suggestion + "\"\nType 'memory suggestions', then 'approve memory 1' or 'reject memory 1'."
         self.update_streaming_reply(answer)
+        # Voice is optional and only runs when the user explicitly enables it.
+        if self.auto_speak and ANDROID_AVAILABLE:
+            Clock.schedule_once(lambda dt: self.speak_last_button(None), 0.15)
 
     def api_key_button(self, instance):
         content = BoxLayout(orientation="vertical", spacing=dp(10), padding=dp(12))
