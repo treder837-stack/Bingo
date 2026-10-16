@@ -1,5 +1,5 @@
 # ============================================================
-# ⚔️ BINGO — SOLO SYSTEM v16.4 PERSONAL AI UPGRADE
+# ⚔️ BINGO — SOLO SYSTEM v16.5 HYBRID CHAT UPGRADE
 # Kivy + Gemini + TTS + optional continuous speech recognition + notifications + alarm
 # Combines memory recall, follow-up awareness, adaptive responses, voice output, and daily-system context
 # ============================================================
@@ -40,6 +40,7 @@ except Exception:
 
 # Keep the focused message input visible when Android opens the keyboard.
 Window.softinput_mode = "below_target"
+Window.clearcolor = (0.025, 0.03, 0.055, 1)
 
 # ------------------------------------------------------------
 # CONFIG
@@ -1185,7 +1186,8 @@ def command_response(message):
 
 class BingoLayout(BoxLayout):
     def __init__(self, **kwargs):
-        super().__init__(orientation="vertical", padding=dp(10), spacing=dp(8), **kwargs)
+        super().__init__(orientation="vertical", padding=dp(10), spacing=dp(7), **kwargs)
+        self.background_color = (0.025, 0.03, 0.055, 1)
         self.last_bingo_reply = "Hello Abdul. I am ready."
         self.continuous_listening = False
         self.voice_busy = False
@@ -1193,9 +1195,11 @@ class BingoLayout(BoxLayout):
         self._speech_restart_event = None
 
         self.hud = Label(
-            text="⚔️ BINGO SYSTEM",
+            text="✦ B I N G O  ·  PERSONAL AI\nYour assistant. Your progress. Your system.",
             size_hint_y=None,
-            height=dp(80),
+            height=dp(70),
+            color=(0.45, 0.85, 1, 1),
+            font_size="18sp",
             halign="left",
             valign="middle",
         )
@@ -1209,11 +1213,13 @@ class BingoLayout(BoxLayout):
             scroll_type=["bars", "content"],
         )
         self.chat_label = Label(
-            text="⚔️ BINGO\n\nHello Abdul. I'm ready.",
+            text="✦ BINGO\n\nHey! I’m ready. Ask me anything, continue a topic, or use the microphone controls below.\n\nTip: your saved memory and Solo System quests stay part of Bingo.",
             size_hint=(1, None),
+            color=(0.92, 0.94, 1, 1),
+            font_size="16sp",
             halign="left",
             valign="top",
-            padding=(dp(8), dp(8)),
+            padding=(dp(12), dp(12)),
         )
         # Keep the label exactly as wide as the visible scroll area and wrap long lines.
         self.chat_label.bind(width=self._fit_chat_text)
@@ -1222,10 +1228,10 @@ class BingoLayout(BoxLayout):
         self.add_widget(self.scroll)
 
         self.message_box = TextInput(
-            hint_text="Talk to Bingo...",
+            hint_text="Message Bingo…",
             hint_text_color=(0.72, 0.74, 0.78, 1),
             foreground_color=(1, 1, 1, 1),
-            background_color=(0.12, 0.13, 0.17, 1),
+            background_color=(0.09, 0.11, 0.16, 1),
             cursor_color=(1, 1, 1, 1),
             selection_color=(0.2, 0.45, 0.8, 0.7),
             # Ask Android/Gboard to use normal text input with word suggestions.
