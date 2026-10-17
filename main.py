@@ -1191,7 +1191,7 @@ class BingoLayout(BoxLayout):
         self.last_bingo_reply = "Hello Abdul. I am ready."
         self.continuous_listening = False
         self.voice_busy = False
-        self.auto_speak = False
+        self.auto_speak = True
         self._speech_restart_event = None
 
         self.hud = Label(
@@ -1248,7 +1248,7 @@ class BingoLayout(BoxLayout):
         for button_specs in [
             [("SEND", self.send_message), ("SPEAK LAST", self.speak_last_button), ("STATUS", self.status_button), ("QUESTS", self.quests_button)],
             [("API KEY", self.api_key_button), ("TEST NOTICE", self.notification_button), ("ACTION TEST", self.action_notification_button), ("ALARM", self.alarm_button)],
-            [("🎙 LISTEN CONTINUOUSLY", self.toggle_continuous_listening), ("STOP LISTENING", self.stop_continuous_listening), ("AUTO SPEAK: OFF", self.toggle_auto_speak)],
+            [("🎙 HANDS-FREE: ON", self.toggle_continuous_listening), ("STOP LISTENING", self.stop_continuous_listening), ("AUTO SPEAK: ON", self.toggle_auto_speak)],
         ]:
             row = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(5))
             for text_value, callback in button_specs:
@@ -1341,6 +1341,15 @@ class BingoLayout(BoxLayout):
             # Android TTS handles long passages poorly; read a practical first section.
             if len(text) > 3500:
                 text = text[:3500] + ". The reply is longer, so I read the first part only."
+            # Improve Android TTS defaults where supported. Actual voice quality depends
+            # on the user's installed Android speech engine and selected voice.
+            try:
+                Locale = jnius.autoclass("java.util.Locale")
+                TTS_ENGINE.setLanguage(Locale.forLanguageTag("en-IN"))
+                TTS_ENGINE.setSpeechRate(0.94)
+                TTS_ENGINE.setPitch(1.0)
+            except Exception:
+                pass
             # Use the String, int, HashMap overload supported by this Android TTS API.
             TTS_ENGINE.speak(text, TextToSpeech.QUEUE_FLUSH, HashMap())
         except Exception as exc:
@@ -1423,7 +1432,7 @@ class BingoLayout(BoxLayout):
                 SPEECH_LISTENER = Listener()
                 SPEECH_RECOGNIZER = autoclass("android.speech.SpeechRecognizer").createSpeechRecognizer(activity)
                 SPEECH_RECOGNIZER.setRecognitionListener(SPEECH_LISTENER)
-            self.add_message("⚔️ Bingo", "🎙 Continuous listening is ON. Speak a phrase; tap STOP LISTENING to finish. Listening pauses while Bingo prepares a reply.")
+            self.add_message("⚔️ Bingo", "🎙 Hands-free voice is ON. Speak naturally; Bingo will answer aloud and listen again. Tap STOP LISTENING to end the session.")
             Clock.schedule_once(lambda dt: self._start_speech_recognition(), 0.2)
         except Exception as exc:
             self.continuous_listening = False
@@ -1653,6 +1662,13 @@ class BingoApp(App):
 
         # Always arm the next 11:00 PM Android alarm.
         Clock.schedule_once(lambda dt: self._finish_startup(), 1.5)
+        # Start hands-free mode on app launch. Android may still ask for microphone
+        # permission the first time; that system permission prompt cannot be skipped.
+        Clock.schedule_once(lambda dt: self._start_hands_free_if_available(), 2.5)
+
+    def _start_hands_free_if_available(self):
+        if APP_INSTANCE and ANDROID_AVAILABLE and not APP_INSTANCE.continuous_listening:
+            APP_INSTANCE.toggle_continuous_listening(None)
 
     def _finish_startup(self):
         ok, msg = setup_android_notifications()
