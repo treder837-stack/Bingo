@@ -1288,9 +1288,9 @@ class BingoLayout(BoxLayout):
 
         # Two compact rows avoid cramped buttons on narrow phone screens.
         for button_specs in [
-            [("SEND", self.send_message), ("SPEAK LAST", self.speak_last_button), ("STATUS", self.status_button), ("QUESTS", self.quests_button)],
+            [("SEND", self.send_message), ("STATUS", self.status_button), ("QUESTS", self.quests_button)],
             [("API KEY", self.api_key_button), ("TEST NOTICE", self.notification_button), ("ACTION TEST", self.action_notification_button), ("ALARM", self.alarm_button)],
-            [("🎙 HANDS-FREE: ON", self.toggle_continuous_listening), ("STOP LISTENING", self.stop_continuous_listening), ("AUTO SPEAK: ON", self.toggle_auto_speak)],
+            [("🎙 START VOICE", self.start_voice_button), ("END VOICE SESSION", self.stop_continuous_listening)],
         ]:
             row = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(5))
             for text_value, callback in button_specs:
@@ -1336,13 +1336,10 @@ class BingoLayout(BoxLayout):
         self.last_bingo_reply = str(text)
         Clock.schedule_once(lambda dt: setattr(self.scroll, "scroll_y", 0), 0.03)
 
-    def toggle_auto_speak(self, instance):
-        """Toggle optional automatic reading of completed Bingo replies."""
-        self.auto_speak = not self.auto_speak
-        if instance is not None:
-            instance.text = "AUTO SPEAK: ON" if self.auto_speak else "AUTO SPEAK: OFF"
-        state = "enabled" if self.auto_speak else "disabled"
-        self.add_message("⚔️ Bingo", f"🔊 Automatic voice replies {state}. You can still use SPEAK LAST anytime.")
+    def start_voice_button(self, instance):
+        """Start a voice conversation without an on/off toggle or spoken status announcement."""
+        if not self.continuous_listening:
+            self.toggle_continuous_listening(None)
 
     def speak_last_button(self, instance):
         """Speak the most recent Bingo reply using Android's built-in TTS."""
@@ -1375,7 +1372,6 @@ class BingoLayout(BoxLayout):
                 TTS_LISTENER = OnInitListener(self)
                 TextToSpeech = autoclass("android.speech.tts.TextToSpeech")
                 TTS_ENGINE = TextToSpeech(android_context, TTS_LISTENER)
-                self.add_message("⚔️ Bingo", "🔊 Starting voice output. Tap SPEAK LAST again in a moment if you hear nothing.")
                 return
             self._speak_now()
         except Exception as exc:
@@ -1430,7 +1426,6 @@ class BingoLayout(BoxLayout):
                 self.add_message("⚔️ Bingo", "Speech recognition is unavailable. Install or enable Google's speech recognition service, then try again.")
                 return
             self.continuous_listening = True
-            self.add_message("⚔️ Bingo", "🎙 Starting continuous listening. Allow microphone access if Android asks.")
             # Give Android a moment to display/resolve the runtime permission prompt.
             Clock.schedule_once(lambda dt: self._create_speech_recognizer_ui(), 1.0)
         except Exception as exc:
@@ -1489,7 +1484,6 @@ class BingoLayout(BoxLayout):
                 SPEECH_LISTENER = Listener()
                 SPEECH_RECOGNIZER = autoclass("android.speech.SpeechRecognizer").createSpeechRecognizer(activity)
                 SPEECH_RECOGNIZER.setRecognitionListener(SPEECH_LISTENER)
-            self.add_message("⚔️ Bingo", "🎙 Hands-free voice is ON. Speak naturally; Bingo will answer aloud and listen again. Tap STOP LISTENING to end the session.")
             Clock.schedule_once(lambda dt: self._start_speech_recognition(), 0.2)
         except Exception as exc:
             self.continuous_listening = False
@@ -1550,8 +1544,13 @@ class BingoLayout(BoxLayout):
     def _speak_voice_answer(self):
         self.voice_busy = True
         self.speak_last_button(None)
-        # Speech recognition resumes after a short pause so it doesn't immediately capture Bingo's voice.
-        Clock.schedule_once(lambda dt: self._resume_continuous_listening(), max(4.0, min(30.0, len(str(self.last_bingo_reply)) / 12.0)))
+        # Android TTS has no completion callback in this compatibility build, so estimate
+        # speech duration and leave a short safety margin before reopening the microphone.
+        spoken_length = min(len(str(self.last_bingo_reply)), 3500)
+        Clock.schedule_once(
+            lambda dt: self._resume_continuous_listening(),
+            max(3.0, min(45.0, spoken_length / 10.0 + 1.5)),
+        )
 
     def _resume_continuous_listening(self):
         if self.continuous_listening:
@@ -1573,8 +1572,6 @@ class BingoLayout(BoxLayout):
                 TTS_ENGINE.stop()
         except Exception:
             pass
-        if was_listening:
-            self.add_message("⚔️ Bingo", "🛑 Continuous listening stopped. The microphone will not restart unless you tap LISTEN CONTINUOUSLY again.")
 
     @android_ui_thread
     def _stop_speech_recognizer_ui(self):
@@ -1618,9 +1615,12 @@ class BingoLayout(BoxLayout):
             answer += "\n\n🧠 Memory suggestion (not saved): \"" + suggestion + "\"\nType 'memory suggestions', then 'approve memory 1' or 'reject memory 1'."
         self.update_streaming_reply(answer)
         self._streaming_bubble = None
-        # Voice is optional and only runs when the user explicitly enables it.
-        if self.auto_speak and ANDROID_AVAILABLE:
-            Clock.schedule_once(lambda dt: self.speak_last_button(None), 0.15)
+        # Speak replies automatically; in a voice session, resume listening after speech completes.
+        if ANDROID_AVAILABLE:
+            if self.continuous_listening:
+                Clock.schedule_once(lambda dt: self._speak_voice_answer(), 0.15)
+            elif self.auto_speak:
+                Clock.schedule_once(lambda dt: self.speak_last_button(None), 0.15)
 
     def api_key_button(self, instance):
         content = BoxLayout(orientation="vertical", spacing=dp(10), padding=dp(12))
