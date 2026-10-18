@@ -1,5 +1,5 @@
 # ============================================================
-# ⚔️ BINGO — SOLO SYSTEM v16.8 LIVE AI EXPERIENCE
+# ⚔️ BINGO — SOLO SYSTEM v16.9 INTERRUPTIBLE VOICE
 # Kivy + Gemini + TTS + optional continuous speech recognition + notifications + alarm
 # Combines memory recall, follow-up awareness, adaptive responses, voice output, and daily-system context
 # ============================================================
@@ -31,6 +31,7 @@ from kivy.uix.progressbar import ProgressBar
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.textinput import TextInput
 from kivy.uix.popup import Popup
+from kivy.uix.slider import Slider
 
 # Android SpeechRecognizer APIs must run on Android's UI thread, which is
 # distinct from Kivy's Python thread. Fall back to identity off Android.
@@ -60,6 +61,8 @@ LONG_TERM_MEMORY_FILE = os.path.join(BASE_DIR, "bingo_long_term_memory.json")
 PENDING_MEMORY_FILE = os.path.join(BASE_DIR, "bingo_memory_suggestions.json")
 PROFILE_FILE = os.path.join(BASE_DIR, "profile.json")
 SYSTEM_FILE = os.path.join(BASE_DIR, "system.json")
+VOICE_SETTINGS_FILE = os.path.join(BASE_DIR, "bingo_voice_settings.json")
+VOICE_SETTINGS = {"voice_name": "", "rate": 0.95, "pitch": 1.0}
 
 CHANNEL_ID = "bingo_daily"
 CHANNEL_NAME = "Bingo Daily"
@@ -135,6 +138,8 @@ def load_json(path, default):
         return value
     except Exception:
         return default.copy() if isinstance(default, dict) else default
+
+VOICE_SETTINGS.update(load_json(VOICE_SETTINGS_FILE, VOICE_SETTINGS))
 
 def save_json(path, value):
     try:
@@ -1240,6 +1245,7 @@ class BingoLayout(BoxLayout):
         self.last_bingo_reply = "Hello Abdul. I am ready."
         self.continuous_listening = False
         self.voice_busy = False
+        self.tts_speaking = False
         self.auto_speak = True
         self._speech_restart_event = None
 
@@ -1290,7 +1296,7 @@ class BingoLayout(BoxLayout):
         for button_specs in [
             [("SEND", self.send_message), ("STATUS", self.status_button), ("QUESTS", self.quests_button)],
             [("API KEY", self.api_key_button), ("TEST NOTICE", self.notification_button), ("ACTION TEST", self.action_notification_button), ("ALARM", self.alarm_button)],
-            [("🎙 START VOICE", self.start_voice_button), ("END VOICE SESSION", self.stop_continuous_listening)],
+            [("🎙 START VOICE", self.start_voice_button), ("END VOICE SESSION", self.stop_continuous_listening), ("VOICE OPTIONS", self.voice_options_button)],
         ]:
             row = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(5))
             for text_value, callback in button_specs:
@@ -1389,24 +1395,166 @@ class BingoLayout(BoxLayout):
             # Android TTS handles long passages poorly; read a practical first section.
             if len(text) > 3500:
                 text = text[:3500] + ". The reply is longer, so I read the first part only."
-            # Prefer Indian English where available, with a slightly slower,
-            # lower-pitched delivery for a calmer assistant style. Android's
-            # installed TTS engine determines the actual voice and quality.
+            # Use the user's selected installed Android TTS voice, if available.
+            # Voice choices come from the TTS engine installed on this phone; they
+            # are not Gemini's proprietary voice catalog.
             try:
                 Locale = jnius.autoclass("java.util.Locale")
-                language_result = TTS_ENGINE.setLanguage(Locale.forLanguageTag("en-IN"))
-                TTS_ENGINE.setSpeechRate(0.88)
-                TTS_ENGINE.setPitch(0.88)
-                # If en-IN is unavailable, fall back to an English voice.
-                if int(language_result) < -1:
-                    TTS_ENGINE.setLanguage(Locale.forLanguageTag("en-US"))
+                Voice = jnius.autoclass("android.speech.tts.Voice")
+                voices = TTS_ENGINE.getVoices()
+                selected_name = str(VOICE_SETTINGS.get("voice_name", ""))
+                selected_voice = None
+                if voices is not None and selected_name:
+                    for voice in voices.toArray():
+                        if str(voice.getName()) == selected_name:
+                            selected_voice = voice
+                            break
+                if selected_voice is not None:
+                    TTS_ENGINE.setVoice(selected_voice)
+                else:
+                    language_result = TTS_ENGINE.setLanguage(Locale.forLanguageTag("en-IN"))
+                    if int(language_result) < -1:
+                        TTS_ENGINE.setLanguage(Locale.forLanguageTag("en-US"))
+                TTS_ENGINE.setSpeechRate(float(VOICE_SETTINGS.get("rate", 0.95)))
+                TTS_ENGINE.setPitch(float(VOICE_SETTINGS.get("pitch", 1.0)))
             except Exception:
-                pass
+                try:
+                    Locale = jnius.autoclass("java.util.Locale")
+                    TTS_ENGINE.setLanguage(Locale.forLanguageTag("en-IN"))
+                    TTS_ENGINE.setSpeechRate(float(VOICE_SETTINGS.get("rate", 0.95)))
+                    TTS_ENGINE.setPitch(float(VOICE_SETTINGS.get("pitch", 1.0)))
+                except Exception:
+                    pass
             # Use the String, int, HashMap overload supported by this Android TTS API.
             # A fresh utterance replaces any old spoken reply instead of overlapping it.
+            self.tts_speaking = True
             TTS_ENGINE.speak(text, TextToSpeech.QUEUE_FLUSH, HashMap())
+            # Estimate the end of playback so later room sounds are not mistaken
+            # for an interruption. Actual timing varies with the installed TTS voice.
+            estimated_seconds = max(2.0, min(60.0, len(text) / 10.0 + 1.0))
+            Clock.schedule_once(lambda dt: self._mark_tts_finished(), estimated_seconds)
+            # Keep recognition active during speech so a user can barge in.
+            # This is best-effort; speaker echo varies by device and audio route.
+            if self.continuous_listening:
+                Clock.schedule_once(lambda dt: self._start_speech_recognition(), 0.25)
         except Exception as exc:
             self.add_message("⚔️ Bingo", "❌ Could not speak the reply: " + repr(exc))
+
+    def voice_options_button(self, instance):
+        """Let the user choose any voice installed in Android's TTS engine."""
+        global TTS_ENGINE, TTS_LISTENER, android_context
+        if not ANDROID_AVAILABLE or android_context is None:
+            self.add_message("⚔️ Bingo", "Voice options are available in the Android APK.")
+            return
+        if TTS_ENGINE is not None:
+            self._show_voice_options()
+            return
+        try:
+            from jnius import autoclass, PythonJavaClass, java_method
+            layout = self
+            class VoiceInitListener(PythonJavaClass):
+                __javainterfaces__ = ["android/speech/tts/TextToSpeech$OnInitListener"]
+                __javacontext__ = "app"
+                def __init__(self):
+                    super().__init__()
+                @java_method("(I)V")
+                def onInit(self, status):
+                    TextToSpeech = autoclass("android.speech.tts.TextToSpeech")
+                    if status == TextToSpeech.SUCCESS:
+                        Clock.schedule_once(lambda dt: layout._show_voice_options(), 0)
+                    else:
+                        Clock.schedule_once(lambda dt: layout.add_message("⚔️ Bingo", "Android text-to-speech could not initialize."), 0)
+            TTS_LISTENER = VoiceInitListener()
+            TTS_ENGINE = autoclass("android.speech.tts.TextToSpeech")(android_context, TTS_LISTENER)
+        except Exception as exc:
+            self.add_message("⚔️ Bingo", "Could not load voice options: " + str(exc))
+
+    def _show_voice_options(self):
+        global TTS_ENGINE
+        if TTS_ENGINE is None:
+            self.add_message("⚔️ Bingo", "Text-to-speech is still starting. Please try again.")
+            return
+        try:
+            voices = TTS_ENGINE.getVoices()
+            voice_items = [] if voices is None else list(voices.toArray())
+            # Prefer English voices, but show other installed voices too.
+            voice_items.sort(key=lambda v: (0 if str(v.getLocale().getLanguage()).lower() == "en" else 1,
+                                            str(v.getLocale().toString()), str(v.getName())))
+            if not voice_items:
+                self.add_message("⚔️ Bingo", "No selectable voices were returned by Android TTS. Check your phone's Text-to-speech settings.")
+                return
+
+            content = BoxLayout(orientation="vertical", spacing=dp(8), padding=dp(10))
+            selected_name = str(VOICE_SETTINGS.get("voice_name", ""))
+            current_text = "Current voice: Android default" if not selected_name else "Current voice: " + selected_name
+            current = Label(text=current_text, size_hint_y=None, height=dp(34), halign="left", valign="middle")
+            current.bind(size=lambda obj, value: setattr(obj, "text_size", value))
+            content.add_widget(current)
+            voice_scroll = ScrollView(do_scroll_x=False, size_hint=(1, 1))
+            voice_list = GridLayout(cols=1, spacing=dp(5), size_hint_y=None)
+            voice_list.bind(minimum_height=voice_list.setter("height"))
+            popup = Popup(title="Bingo Voice Studio", content=content, size_hint=(0.94, 0.88))
+
+            def select_voice(voice, *_):
+                try:
+                    TTS_ENGINE.stop()
+                    TTS_ENGINE.setVoice(voice)
+                    VOICE_SETTINGS["voice_name"] = str(voice.getName())
+                    save_json(VOICE_SETTINGS_FILE, VOICE_SETTINGS)
+                    current.text = "Selected: " + str(voice.getName()) + " (" + str(voice.getLocale().toString()) + ")"
+                    # Preview is optional and deliberately short.
+                    from jnius import autoclass
+                    TTS_ENGINE.setSpeechRate(float(VOICE_SETTINGS.get("rate", 0.95)))
+                    TTS_ENGINE.setPitch(float(VOICE_SETTINGS.get("pitch", 1.0)))
+                    TTS_ENGINE.speak("Hello, I'm Bingo.", autoclass("android.speech.tts.TextToSpeech").QUEUE_FLUSH, None)
+                except Exception as exc:
+                    self.add_message("⚔️ Bingo", "Could not select this voice: " + str(exc))
+
+            for voice in voice_items:
+                locale_name = str(voice.getLocale().toString())
+                voice_name = str(voice.getName())
+                network = " · online" if bool(voice.isNetworkConnectionRequired()) else " · offline"
+                label = voice_name + "\n" + locale_name + network
+                button = Button(text=label, size_hint_y=None, height=dp(58), halign="left", font_size="12sp")
+                button.bind(on_press=lambda btn, v=voice: select_voice(v))
+                voice_list.add_widget(button)
+            voice_scroll.add_widget(voice_list)
+            content.add_widget(voice_scroll)
+
+            # Naturalness controls: modest ranges avoid extreme, robotic settings.
+            rate_title = Label(text="Speaking speed: %.2fx" % float(VOICE_SETTINGS.get("rate", 0.95)), size_hint_y=None, height=dp(24))
+            rate_slider = Slider(min=0.75, max=1.25, value=float(VOICE_SETTINGS.get("rate", 0.95)), size_hint_y=None, height=dp(32))
+            rate_slider.bind(value=lambda _s, value: setattr(rate_title, "text", "Speaking speed: %.2fx" % value))
+            pitch_title = Label(text="Pitch: %.2f" % float(VOICE_SETTINGS.get("pitch", 1.0)), size_hint_y=None, height=dp(24))
+            pitch_slider = Slider(min=0.8, max=1.2, value=float(VOICE_SETTINGS.get("pitch", 1.0)), size_hint_y=None, height=dp(32))
+            pitch_slider.bind(value=lambda _s, value: setattr(pitch_title, "text", "Pitch: %.2f" % value))
+            content.add_widget(rate_title)
+            content.add_widget(rate_slider)
+            content.add_widget(pitch_title)
+            content.add_widget(pitch_slider)
+            footer = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(8))
+            save_btn = Button(text="SAVE VOICE SETTINGS")
+            close_btn = Button(text="CLOSE")
+            footer.add_widget(save_btn)
+            footer.add_widget(close_btn)
+            content.add_widget(footer)
+
+            def save_voice_settings(*_):
+                VOICE_SETTINGS["rate"] = float(rate_slider.value)
+                VOICE_SETTINGS["pitch"] = float(pitch_slider.value)
+                save_json(VOICE_SETTINGS_FILE, VOICE_SETTINGS)
+                try:
+                    TTS_ENGINE.setSpeechRate(VOICE_SETTINGS["rate"])
+                    TTS_ENGINE.setPitch(VOICE_SETTINGS["pitch"])
+                except Exception:
+                    pass
+                self.add_message("⚔️ Bingo", "✅ Voice settings saved. The selected voice and speaking style will be used for future replies.")
+                popup.dismiss()
+            save_btn.bind(on_press=save_voice_settings)
+            close_btn.bind(on_press=popup.dismiss)
+            popup.open()
+        except Exception as exc:
+            self.add_message("⚔️ Bingo", "Could not open voice options: " + repr(exc))
 
     def toggle_continuous_listening(self, instance):
         """Start continuous recognition; Android SpeechRecognizer setup runs on UI thread."""
@@ -1454,7 +1602,11 @@ class BingoLayout(BoxLayout):
                         pass
                     @java_method("()V")
                     def onBeginningOfSpeech(self):
-                        pass
+                        # Barge-in: when the user starts talking during Bingo's reply,
+                        # stop TTS immediately. Android may occasionally mistake speaker
+                        # audio for speech; this is a best-effort native recognizer behavior.
+                        if layout.tts_speaking:
+                            Clock.schedule_once(lambda dt: layout._interrupt_tts_for_user(), 0)
                     @java_method("(F)V")
                     def onRmsChanged(self, rmsdB):
                         pass
@@ -1497,7 +1649,7 @@ class BingoLayout(BoxLayout):
     @android_ui_thread
     def _start_speech_recognition_ui(self):
         global SPEECH_RECOGNIZER
-        if not self.continuous_listening or self.voice_busy or SPEECH_RECOGNIZER is None:
+        if not self.continuous_listening or SPEECH_RECOGNIZER is None:
             return
         try:
             from jnius import autoclass
@@ -1506,7 +1658,7 @@ class BingoLayout(BoxLayout):
             intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
             intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-IN")
-            intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, False)
+            intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, True)
             intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
             SPEECH_RECOGNIZER.startListening(intent)
         except Exception as exc:
@@ -1544,17 +1696,31 @@ class BingoLayout(BoxLayout):
     def _speak_voice_answer(self):
         self.voice_busy = True
         self.speak_last_button(None)
-        # Android TTS has no completion callback in this compatibility build, so estimate
-        # speech duration and leave a short safety margin before reopening the microphone.
-        spoken_length = min(len(str(self.last_bingo_reply)), 3500)
-        Clock.schedule_once(
-            lambda dt: self._resume_continuous_listening(),
-            max(3.0, min(45.0, spoken_length / 10.0 + 1.5)),
-        )
+        # Recognition remains active during speech to allow barge-in. If no user
+        # interruption occurs, Android's speech recognizer will report an error or
+        # end event and the normal retry path will keep the session alive.
+
+    def _mark_tts_finished(self):
+        self.tts_speaking = False
+
+    def _interrupt_tts_for_user(self):
+        """Stop Bingo's current spoken reply when the user begins speaking."""
+        global TTS_ENGINE
+        if not self.continuous_listening or not self.tts_speaking:
+            return
+        try:
+            if TTS_ENGINE is not None:
+                TTS_ENGINE.stop()
+        except Exception:
+            pass
+        self.tts_speaking = False
+        # Let the current recognition session finish and deliver the user's words.
+        self.voice_busy = False
 
     def _resume_continuous_listening(self):
         if self.continuous_listening:
             self.voice_busy = False
+            self.tts_speaking = False
             self._start_speech_recognition()
 
     def _speech_error(self, error):
@@ -1566,6 +1732,7 @@ class BingoLayout(BoxLayout):
         was_listening = self.continuous_listening
         self.continuous_listening = False
         self.voice_busy = False
+        self.tts_speaking = False
         self._stop_speech_recognizer_ui()
         try:
             if TTS_ENGINE is not None:
