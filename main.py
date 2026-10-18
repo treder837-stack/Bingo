@@ -1,5 +1,5 @@
 # ============================================================
-# ⚔️ BINGO — SOLO SYSTEM v16.5 HYBRID CHAT UPGRADE
+# ⚔️ BINGO — SOLO SYSTEM v16.8 LIVE AI EXPERIENCE
 # Kivy + Gemini + TTS + optional continuous speech recognition + notifications + alarm
 # Combines memory recall, follow-up awareness, adaptive responses, voice output, and daily-system context
 # ============================================================
@@ -23,6 +23,8 @@ from kivy.clock import Clock, mainthread
 from kivy.metrics import dp
 from kivy.core.window import Window
 from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.gridlayout import GridLayout
+from kivy.graphics import Color, RoundedRectangle
 from kivy.uix.button import Button
 from kivy.uix.label import Label
 from kivy.uix.progressbar import ProgressBar
@@ -1181,8 +1183,55 @@ def command_response(message):
     return None
 
 # ------------------------------------------------------------
-# UI
+# UI — v16.8 chat bubbles
 # ------------------------------------------------------------
+
+class ChatBubble(BoxLayout):
+    """Small self-sizing message card used by the chat timeline."""
+    def __init__(self, sender, message, **kwargs):
+        self.sender = sender
+        self.message_label = None
+        self._is_user = sender not in ("⚔️ Bingo", "Bingo", "✦ BINGO")
+        super().__init__(orientation="vertical", size_hint=(0.92, None),
+                         padding=(dp(12), dp(9)), spacing=dp(4), **kwargs)
+        self.height = dp(56)
+        with self.canvas.before:
+            self._bg_color = Color(*( (0.10, 0.20, 0.31, 1) if self._is_user else (0.09, 0.11, 0.17, 1) ))
+            self._bg_rect = RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(13)])
+        self.bind(pos=self._sync_bg, size=self._sync_bg)
+        title = Label(text=sender, size_hint_y=None, height=dp(20),
+                      color=((0.52, 0.85, 1, 1) if not self._is_user else (0.72, 0.88, 1, 1)),
+                      font_size="12sp", bold=True, halign="left", valign="middle")
+        title.bind(size=lambda obj, value: setattr(obj, "text_size", value))
+        self.add_widget(title)
+        self.message_label = Label(text=str(message), size_hint_y=None,
+                                   color=(0.94, 0.95, 1, 1), font_size="15sp",
+                                   halign="left", valign="top", markup=False)
+        self.message_label.bind(width=self._fit_text, texture_size=self._fit_height)
+        self.add_widget(self.message_label)
+        self.message = str(message)
+        self._recalculate_height()
+
+    def _sync_bg(self, *_):
+        self._bg_rect.pos = self.pos
+        self._bg_rect.size = self.size
+
+    def _fit_text(self, label, width):
+        label.text_size = (max(1, width), None)
+
+    def _fit_height(self, label, texture_size):
+        label.height = max(dp(20), texture_size[1])
+        self._recalculate_height()
+
+    def _recalculate_height(self):
+        if self.message_label is not None:
+            self.height = dp(9) * 2 + dp(20) + dp(4) + max(dp(20), self.message_label.height)
+
+    def set_message(self, message):
+        self.message = str(message)
+        self.message_label.text = self.message
+        self._recalculate_height()
+
 
 class BingoLayout(BoxLayout):
     def __init__(self, **kwargs):
@@ -1195,7 +1244,7 @@ class BingoLayout(BoxLayout):
         self._speech_restart_event = None
 
         self.hud = Label(
-            text="✦ B I N G O  ·  PERSONAL AI\nYour assistant. Your progress. Your system.",
+            text="✦ B I N G O  ·  LIVE AI v16.8\nYour assistant. Your progress. Your system.",
             size_hint_y=None,
             height=dp(70),
             color=(0.45, 0.85, 1, 1),
@@ -1212,20 +1261,13 @@ class BingoLayout(BoxLayout):
             bar_width=dp(4),
             scroll_type=["bars", "content"],
         )
-        self.chat_label = Label(
-            text="✦ BINGO\n\nHey! I’m ready. Ask me anything, continue a topic, or use the microphone controls below.\n\nTip: your saved memory and Solo System quests stay part of Bingo.",
-            size_hint=(1, None),
-            color=(0.92, 0.94, 1, 1),
-            font_size="16sp",
-            halign="left",
-            valign="top",
-            padding=(dp(12), dp(12)),
-        )
-        # Keep the label exactly as wide as the visible scroll area and wrap long lines.
-        self.chat_label.bind(width=self._fit_chat_text)
-        self.chat_label.bind(texture_size=self._fit_chat_height)
-        self.scroll.add_widget(self.chat_label)
+        self.chat_timeline = GridLayout(cols=1, spacing=dp(10), padding=(dp(4), dp(8)),
+                                        size_hint_y=None, size_hint_x=1)
+        self.chat_timeline.bind(minimum_height=self.chat_timeline.setter("height"))
+        self.scroll.add_widget(self.chat_timeline)
         self.add_widget(self.scroll)
+        self._streaming_bubble = None
+        self.add_message("✦ BINGO", "Hey! I’m ready. Ask me anything, continue a topic, or use the microphone controls below.\n\nTip: your saved memory and Solo System quests stay part of Bingo.")
 
         self.message_box = TextInput(
             hint_text="Message Bingo…",
@@ -1260,29 +1302,39 @@ class BingoLayout(BoxLayout):
         Clock.schedule_interval(self.refresh_hud, 1)
         Clock.schedule_interval(self.check_daily_reminder, 10)
 
-    def _fit_chat_text(self, instance, width):
-        instance.text_size = (max(1, width - dp(16)), None)
-
-    def _fit_chat_height(self, instance, texture_size):
-        instance.height = texture_size[1] + dp(16)
+    def _create_message_bubble(self, sender, message):
+        text = str(message)
+        if sender in ("⚔️ Bingo", "Bingo", "✦ BINGO"):
+            self.last_bingo_reply = text
+        bubble = ChatBubble(sender, text)
+        row = BoxLayout(size_hint_y=None, height=bubble.height)
+        if bubble._is_user:
+            from kivy.uix.widget import Widget
+            row.add_widget(Widget())
+            row.add_widget(bubble)
+        else:
+            row.add_widget(bubble)
+            from kivy.uix.widget import Widget
+            row.add_widget(Widget())
+        bubble.bind(height=lambda obj, value, container=row: setattr(container, "height", value))
+        self.chat_timeline.add_widget(row)
+        self._last_bubble = bubble
+        Clock.schedule_once(lambda dt: setattr(self.scroll, "scroll_y", 0), 0.08)
+        return bubble
 
     @mainthread
     def add_message(self, sender, message):
-        if sender == "⚔️ Bingo":
-            self.last_bingo_reply = str(message)
-        self.chat_label.text += f"\n\n{sender}: {message}"
-        Clock.schedule_once(lambda dt: setattr(self.scroll, "scroll_y", 0), 0.05)
+        self._create_message_bubble(sender, message)
 
     @mainthread
     def update_streaming_reply(self, text):
-        """Update the in-progress Bingo reply on Kivy's main thread."""
-        old_display = getattr(self, "_streaming_display", "\n\n⚔️ Bingo: ⏳ Thinking...")
-        new_display = "\n\n⚔️ Bingo: " + (text if text else "⏳ Thinking...")
-        if old_display in self.chat_label.text:
-            self.chat_label.text = self.chat_label.text.rsplit(old_display, 1)[0] + new_display
-        self._streaming_display = new_display
-        self.last_bingo_reply = text
-        Clock.schedule_once(lambda dt: setattr(self.scroll, "scroll_y", 0), 0.02)
+        """Update a single in-progress response bubble instead of duplicating text."""
+        if self._streaming_bubble is None:
+            self._streaming_bubble = self.add_message("⚔️ Bingo", text if text else "⏳ Thinking...")
+        else:
+            self._streaming_bubble.set_message(text if text else "⏳ Thinking...")
+        self.last_bingo_reply = str(text)
+        Clock.schedule_once(lambda dt: setattr(self.scroll, "scroll_y", 0), 0.03)
 
     def toggle_auto_speak(self, instance):
         """Toggle optional automatic reading of completed Bingo replies."""
@@ -1341,16 +1393,21 @@ class BingoLayout(BoxLayout):
             # Android TTS handles long passages poorly; read a practical first section.
             if len(text) > 3500:
                 text = text[:3500] + ". The reply is longer, so I read the first part only."
-            # Improve Android TTS defaults where supported. Actual voice quality depends
-            # on the user's installed Android speech engine and selected voice.
+            # Prefer Indian English where available, with a slightly slower,
+            # lower-pitched delivery for a calmer assistant style. Android's
+            # installed TTS engine determines the actual voice and quality.
             try:
                 Locale = jnius.autoclass("java.util.Locale")
-                TTS_ENGINE.setLanguage(Locale.forLanguageTag("en-IN"))
-                TTS_ENGINE.setSpeechRate(0.94)
-                TTS_ENGINE.setPitch(1.0)
+                language_result = TTS_ENGINE.setLanguage(Locale.forLanguageTag("en-IN"))
+                TTS_ENGINE.setSpeechRate(0.88)
+                TTS_ENGINE.setPitch(0.88)
+                # If en-IN is unavailable, fall back to an English voice.
+                if int(language_result) < -1:
+                    TTS_ENGINE.setLanguage(Locale.forLanguageTag("en-US"))
             except Exception:
                 pass
             # Use the String, int, HashMap overload supported by this Android TTS API.
+            # A fresh utterance replaces any old spoken reply instead of overlapping it.
             TTS_ENGINE.speak(text, TextToSpeech.QUEUE_FLUSH, HashMap())
         except Exception as exc:
             self.add_message("⚔️ Bingo", "❌ Could not speak the reply: " + repr(exc))
@@ -1476,7 +1533,7 @@ class BingoLayout(BoxLayout):
             self.add_message("⚔️ Bingo", quick)
             self.last_bingo_reply = quick
             self.speak_last_button(None)
-            Clock.schedule_once(lambda dt: self._resume_continuous_listening(), 5.0)
+            Clock.schedule_once(lambda dt: self._resume_continuous_listening(), max(3.0, min(12.0, len(str(quick)) / 12.0)))
             return
         threading.Thread(target=self._ask_voice_worker, args=(phrase,), daemon=True).start()
 
@@ -1486,6 +1543,7 @@ class BingoLayout(BoxLayout):
         if suggestion:
             answer += "\n\n🧠 Memory suggestion (not saved): \"" + suggestion + "\"\nSay or type 'memory suggestions', then 'approve memory 1' or 'reject memory 1'."
         self.add_message("⚔️ Bingo", answer)
+        self._streaming_bubble = None
         self.last_bingo_reply = str(answer)
         Clock.schedule_once(lambda dt: self._speak_voice_answer(), 0)
 
@@ -1493,7 +1551,7 @@ class BingoLayout(BoxLayout):
         self.voice_busy = True
         self.speak_last_button(None)
         # Speech recognition resumes after a short pause so it doesn't immediately capture Bingo's voice.
-        Clock.schedule_once(lambda dt: self._resume_continuous_listening(), 5.0)
+        Clock.schedule_once(lambda dt: self._resume_continuous_listening(), max(4.0, min(30.0, len(str(self.last_bingo_reply)) / 12.0)))
 
     def _resume_continuous_listening(self):
         if self.continuous_listening:
@@ -1510,6 +1568,11 @@ class BingoLayout(BoxLayout):
         self.continuous_listening = False
         self.voice_busy = False
         self._stop_speech_recognizer_ui()
+        try:
+            if TTS_ENGINE is not None:
+                TTS_ENGINE.stop()
+        except Exception:
+            pass
         if was_listening:
             self.add_message("⚔️ Bingo", "🛑 Continuous listening stopped. The microphone will not restart unless you tap LISTEN CONTINUOUSLY again.")
 
@@ -1532,9 +1595,9 @@ class BingoLayout(BoxLayout):
         quick = command_response(message)
         if quick is not None:
             self.add_message("⚔️ Bingo", quick)
+            self._streaming_bubble = None
             return
-        self._streaming_display = "\n\n⚔️ Bingo: ⏳ Thinking..."
-        self.add_message("⚔️ Bingo", "⏳ Thinking...")
+        self._streaming_bubble = self._create_message_bubble("⚔️ Bingo", "⏳ Thinking...")
         threading.Thread(target=self._ask_worker, args=(message,), daemon=True).start()
 
     def _ask_worker(self, message):
@@ -1554,6 +1617,7 @@ class BingoLayout(BoxLayout):
         if suggestion:
             answer += "\n\n🧠 Memory suggestion (not saved): \"" + suggestion + "\"\nType 'memory suggestions', then 'approve memory 1' or 'reject memory 1'."
         self.update_streaming_reply(answer)
+        self._streaming_bubble = None
         # Voice is optional and only runs when the user explicitly enables it.
         if self.auto_speak and ANDROID_AVAILABLE:
             Clock.schedule_once(lambda dt: self.speak_last_button(None), 0.15)
