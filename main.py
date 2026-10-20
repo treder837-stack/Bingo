@@ -1,5 +1,5 @@
 # ============================================================
-# ⚔️ BINGO — SOLO SYSTEM v16.9 INTERRUPTIBLE VOICE
+# ⚔️ BINGO — SOLO SYSTEM v16.9.1 REDUCED LISTENING BEEPS
 # Kivy + Gemini + TTS + optional continuous speech recognition + notifications + alarm
 # Combines memory recall, follow-up awareness, adaptive responses, voice output, and daily-system context
 # ============================================================
@@ -1433,10 +1433,15 @@ class BingoLayout(BoxLayout):
             # for an interruption. Actual timing varies with the installed TTS voice.
             estimated_seconds = max(2.0, min(60.0, len(text) / 10.0 + 1.0))
             Clock.schedule_once(lambda dt: self._mark_tts_finished(), estimated_seconds)
-            # Keep recognition active during speech so a user can barge in.
-            # This is best-effort; speaker echo varies by device and audio route.
+            # Do not start SpeechRecognizer while TTS is playing. Android recognition
+            # services often play a start tone and may hear Bingo's own speaker audio.
+            # Resume once the estimated speech duration has elapsed. Android does not
+            # provide a universal public switch to disable the recognizer's start tone.
             if self.continuous_listening:
-                Clock.schedule_once(lambda dt: self._start_speech_recognition(), 0.25)
+                Clock.schedule_once(
+                    lambda dt: self._resume_continuous_listening(),
+                    estimated_seconds + 0.35,
+                )
         except Exception as exc:
             self.add_message("⚔️ Bingo", "❌ Could not speak the reply: " + repr(exc))
 
@@ -1648,6 +1653,9 @@ class BingoLayout(BoxLayout):
 
     @android_ui_thread
     def _start_speech_recognition_ui(self):
+        # Android's recognition service may emit a beep each time a new listening
+        # session starts. The public SpeechRecognizer API has no cross-device mute
+        # flag for that tone; avoid duplicate starts wherever possible.
         global SPEECH_RECOGNIZER
         if not self.continuous_listening or SPEECH_RECOGNIZER is None:
             return
@@ -1679,7 +1687,6 @@ class BingoLayout(BoxLayout):
             self.add_message("⚔️ Bingo", quick)
             self.last_bingo_reply = quick
             self.speak_last_button(None)
-            Clock.schedule_once(lambda dt: self._resume_continuous_listening(), max(3.0, min(12.0, len(str(quick)) / 12.0)))
             return
         threading.Thread(target=self._ask_voice_worker, args=(phrase,), daemon=True).start()
 
