@@ -1,5 +1,5 @@
 # ============================================================
-# ⚔️ BINGO — SOLO SYSTEM v16.9.1 REDUCED LISTENING BEEPS
+# ⚔️ BINGO — SOLO SYSTEM v16.9.3 CHAT + LIVE VOICE
 # Kivy + Gemini + TTS + optional continuous speech recognition + notifications + alarm
 # Combines memory recall, follow-up awareness, adaptive responses, voice output, and daily-system context
 # ============================================================
@@ -1246,7 +1246,7 @@ class BingoLayout(BoxLayout):
         self.continuous_listening = False
         self.voice_busy = False
         self.tts_speaking = False
-        self.auto_speak = True
+        self.auto_speak = False
         self._speech_restart_event = None
 
         self.hud = Label(
@@ -1292,18 +1292,26 @@ class BingoLayout(BoxLayout):
         )
         self.add_widget(self.message_box)
 
-        # Two compact rows avoid cramped buttons on narrow phone screens.
-        for button_specs in [
-            [("SEND", self.send_message), ("STATUS", self.status_button), ("QUESTS", self.quests_button)],
-            [("API KEY", self.api_key_button), ("TEST NOTICE", self.notification_button), ("ACTION TEST", self.action_notification_button), ("ALARM", self.alarm_button)],
-            [("🎙 START VOICE", self.start_voice_button), ("END VOICE SESSION", self.stop_continuous_listening), ("VOICE OPTIONS", self.voice_options_button)],
-        ]:
-            row = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(5))
-            for text_value, callback in button_specs:
-                b = Button(text=text_value, font_size="11sp")
-                b.bind(on_press=callback)
-                row.add_widget(b)
-            self.add_widget(row)
+        # Minimal composer inspired by Gemini: no permanent status/quest/test rows.
+        # API setup is shown only until a key has been saved. The Live button is
+        # separate from ordinary chat, and voice does not start automatically.
+        composer = BoxLayout(size_hint_y=None, height=dp(50), spacing=dp(6))
+        self.composer_row = composer
+        self.settings_button = Button(text="＋", size_hint_x=None, width=dp(48), font_size="24sp")
+        self.settings_button.bind(on_press=self.open_quick_settings)
+        composer.add_widget(self.settings_button)
+        self.send_button = Button(text="SEND", size_hint_x=None, width=dp(66))
+        self.send_button.bind(on_press=self.send_message)
+        composer.add_widget(self.send_button)
+        self.api_key_button_widget = None
+        if not get_api_key():
+            self.api_key_button_widget = Button(text="API KEY", size_hint_x=None, width=dp(78), font_size="11sp")
+            self.api_key_button_widget.bind(on_press=self.api_key_button)
+            composer.add_widget(self.api_key_button_widget)
+        self.live_button = Button(text="●  LIVE", size_hint_x=None, width=dp(92), font_size="12sp")
+        self.live_button.bind(on_press=self.live_voice_button)
+        composer.add_widget(self.live_button)
+        self.add_widget(composer)
 
         Clock.schedule_interval(self.refresh_hud, 1)
         Clock.schedule_interval(self.check_daily_reminder, 10)
@@ -1341,6 +1349,34 @@ class BingoLayout(BoxLayout):
             self._streaming_bubble.set_message(text if text else "⏳ Thinking...")
         self.last_bingo_reply = str(text)
         Clock.schedule_once(lambda dt: setattr(self.scroll, "scroll_y", 0), 0.03)
+
+    def open_quick_settings(self, instance):
+        content = BoxLayout(orientation="vertical", spacing=dp(8), padding=dp(10))
+        popup = Popup(title="Bingo settings", content=content, size_hint=(0.88, None), height=dp(260))
+        if get_api_key():
+            key_btn = Button(text="Change Gemini API key", size_hint_y=None, height=dp(46))
+            key_btn.bind(on_press=lambda *_: (popup.dismiss(), self.api_key_button(None)))
+            content.add_widget(key_btn)
+        notice_btn = Button(text="Test notifications", size_hint_y=None, height=dp(46))
+        notice_btn.bind(on_press=lambda *_: (popup.dismiss(), self.notification_button(None)))
+        content.add_widget(notice_btn)
+        status_btn = Button(text="Bingo status", size_hint_y=None, height=dp(46))
+        status_btn.bind(on_press=lambda *_: (popup.dismiss(), self.status_button(None)))
+        content.add_widget(status_btn)
+        close_btn = Button(text="Close", size_hint_y=None, height=dp(42))
+        close_btn.bind(on_press=popup.dismiss)
+        content.add_widget(close_btn)
+        popup.open()
+
+    def live_voice_button(self, instance):
+        if self.continuous_listening:
+            self.stop_continuous_listening(instance)
+            if hasattr(self, "live_button"):
+                self.live_button.text = "●  LIVE"
+        else:
+            self.toggle_continuous_listening(None)
+            if hasattr(self, "live_button"):
+                self.live_button.text = "■  END LIVE"
 
     def start_voice_button(self, instance):
         """Start a voice conversation without an on/off toggle or spoken status announcement."""
@@ -1425,6 +1461,14 @@ class BingoLayout(BoxLayout):
                     TTS_ENGINE.setPitch(float(VOICE_SETTINGS.get("pitch", 1.0)))
                 except Exception:
                     pass
+            # Pause Android speech recognition before playback. Leaving the recognizer
+            # running while TTS speaks can trigger feedback, false barge-in, and repeated
+            # recognizer start/stop tones. Android's public SpeechRecognizer API does not
+            # expose a universal way to mute its own start tone.
+            if self.continuous_listening:
+                self.voice_busy = True
+                self._stop_speech_recognizer_ui()
+
             # Use the String, int, HashMap overload supported by this Android TTS API.
             # A fresh utterance replaces any old spoken reply instead of overlapping it.
             self.tts_speaking = True
@@ -1433,10 +1477,9 @@ class BingoLayout(BoxLayout):
             # for an interruption. Actual timing varies with the installed TTS voice.
             estimated_seconds = max(2.0, min(60.0, len(text) / 10.0 + 1.0))
             Clock.schedule_once(lambda dt: self._mark_tts_finished(), estimated_seconds)
-            # Do not start SpeechRecognizer while TTS is playing. Android recognition
-            # services often play a start tone and may hear Bingo's own speaker audio.
-            # Resume once the estimated speech duration has elapsed. Android does not
-            # provide a universal public switch to disable the recognizer's start tone.
+            # Keep recognition paused until playback is expected to finish, then start
+            # one fresh listening session. This avoids listening to Bingo's own voice.
+            # Trade-off: speaking over Bingo will not interrupt playback in this mode.
             if self.continuous_listening:
                 Clock.schedule_once(
                     lambda dt: self._resume_continuous_listening(),
@@ -1703,15 +1746,13 @@ class BingoLayout(BoxLayout):
     def _speak_voice_answer(self):
         self.voice_busy = True
         self.speak_last_button(None)
-        # Recognition remains active during speech to allow barge-in. If no user
-        # interruption occurs, Android's speech recognizer will report an error or
-        # end event and the normal retry path will keep the session alive.
+        # Recognition is paused by _speak_now and resumes after the spoken reply.
 
     def _mark_tts_finished(self):
         self.tts_speaking = False
 
     def _interrupt_tts_for_user(self):
-        """Stop Bingo's current spoken reply when the user begins speaking."""
+        """Stop Bingo's current spoken reply when recognition detects speech."""
         global TTS_ENGINE
         if not self.continuous_listening or not self.tts_speaking:
             return
@@ -1741,6 +1782,8 @@ class BingoLayout(BoxLayout):
         self.voice_busy = False
         self.tts_speaking = False
         self._stop_speech_recognizer_ui()
+        if hasattr(self, "live_button"):
+            self.live_button.text = "●  LIVE"
         try:
             if TTS_ENGINE is not None:
                 TTS_ENGINE.stop()
@@ -1830,7 +1873,13 @@ class BingoLayout(BoxLayout):
             if store_api_key(key):
                 key_input.text = ""
                 popup.dismiss()
-                self.add_message("⚔️ Bingo", "✅ API key saved in Bingo's private app storage. Send a message to test Gemini.")
+                if self.api_key_button_widget is not None:
+                    try:
+                        self.composer_row.remove_widget(self.api_key_button_widget)
+                    except Exception:
+                        pass
+                    self.api_key_button_widget = None
+                self.add_message("⚔️ Bingo", "✅ API key saved securely. The API KEY button is now hidden; use ＋ if you need to change it later.")
             else:
                 self.add_message("⚔️ Bingo", "❌ Could not save the key. Check app storage permissions and try again.")
 
@@ -1900,9 +1949,7 @@ class BingoApp(App):
 
         # Always arm the next 11:00 PM Android alarm.
         Clock.schedule_once(lambda dt: self._finish_startup(), 1.5)
-        # Start hands-free mode on app launch. Android may still ask for microphone
-        # permission the first time; that system permission prompt cannot be skipped.
-        Clock.schedule_once(lambda dt: self._start_hands_free_if_available(), 2.5)
+        # Do not start the microphone on launch. The user enters Live mode explicitly.
 
     def _start_hands_free_if_available(self):
         if APP_INSTANCE and ANDROID_AVAILABLE and not APP_INSTANCE.continuous_listening:
