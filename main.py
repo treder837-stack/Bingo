@@ -1,5 +1,5 @@
 # ============================================================
-# ⚔️ BINGO — SOLO SYSTEM v16.9.1 REDUCED LISTENING BEEPS
+# ⚔️ BINGO — SOLO SYSTEM v16.9.2 PAUSE RECOGNITION DURING TTS
 # Kivy + Gemini + TTS + optional continuous speech recognition + notifications + alarm
 # Combines memory recall, follow-up awareness, adaptive responses, voice output, and daily-system context
 # ============================================================
@@ -1296,7 +1296,7 @@ class BingoLayout(BoxLayout):
         for button_specs in [
             [("SEND", self.send_message), ("STATUS", self.status_button), ("QUESTS", self.quests_button)],
             [("API KEY", self.api_key_button), ("TEST NOTICE", self.notification_button), ("ACTION TEST", self.action_notification_button), ("ALARM", self.alarm_button)],
-            [("🎙 START VOICE", self.start_voice_button), ("END VOICE SESSION", self.stop_continuous_listening), ("VOICE OPTIONS", self.voice_options_button)],
+            [("🎙 START VOICE", self.start_voice_button), ("END VOICE SESSION", self.stop_continuous_listening)],
         ]:
             row = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(5))
             for text_value, callback in button_specs:
@@ -1425,6 +1425,14 @@ class BingoLayout(BoxLayout):
                     TTS_ENGINE.setPitch(float(VOICE_SETTINGS.get("pitch", 1.0)))
                 except Exception:
                     pass
+            # Pause Android speech recognition before playback. Leaving the recognizer
+            # running while TTS speaks can trigger feedback, false barge-in, and repeated
+            # recognizer start/stop tones. Android's public SpeechRecognizer API does not
+            # expose a universal way to mute its own start tone.
+            if self.continuous_listening:
+                self.voice_busy = True
+                self._stop_speech_recognizer_ui()
+
             # Use the String, int, HashMap overload supported by this Android TTS API.
             # A fresh utterance replaces any old spoken reply instead of overlapping it.
             self.tts_speaking = True
@@ -1433,10 +1441,9 @@ class BingoLayout(BoxLayout):
             # for an interruption. Actual timing varies with the installed TTS voice.
             estimated_seconds = max(2.0, min(60.0, len(text) / 10.0 + 1.0))
             Clock.schedule_once(lambda dt: self._mark_tts_finished(), estimated_seconds)
-            # Do not start SpeechRecognizer while TTS is playing. Android recognition
-            # services often play a start tone and may hear Bingo's own speaker audio.
-            # Resume once the estimated speech duration has elapsed. Android does not
-            # provide a universal public switch to disable the recognizer's start tone.
+            # Keep recognition paused until playback is expected to finish, then start
+            # one fresh listening session. This avoids listening to Bingo's own voice.
+            # Trade-off: speaking over Bingo will not interrupt playback in this mode.
             if self.continuous_listening:
                 Clock.schedule_once(
                     lambda dt: self._resume_continuous_listening(),
@@ -1703,15 +1710,13 @@ class BingoLayout(BoxLayout):
     def _speak_voice_answer(self):
         self.voice_busy = True
         self.speak_last_button(None)
-        # Recognition remains active during speech to allow barge-in. If no user
-        # interruption occurs, Android's speech recognizer will report an error or
-        # end event and the normal retry path will keep the session alive.
+        # Recognition is paused by _speak_now and resumes after the spoken reply.
 
     def _mark_tts_finished(self):
         self.tts_speaking = False
 
     def _interrupt_tts_for_user(self):
-        """Stop Bingo's current spoken reply when the user begins speaking."""
+        """Stop Bingo's current spoken reply when recognition detects speech."""
         global TTS_ENGINE
         if not self.continuous_listening or not self.tts_speaking:
             return
