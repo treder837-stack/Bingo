@@ -1,5 +1,5 @@
 # ============================================================
-# ⚔️ BINGO — SOLO SYSTEM v16.9.3 CHAT + LIVE VOICE
+# ⚔️ BINGO — SOLO SYSTEM v16.9.4 LIVE BARGE-IN
 # Kivy + Gemini + TTS + optional continuous speech recognition + notifications + alarm
 # Combines memory recall, follow-up awareness, adaptive responses, voice output, and daily-system context
 # ============================================================
@@ -32,6 +32,7 @@ from kivy.uix.scrollview import ScrollView
 from kivy.uix.textinput import TextInput
 from kivy.uix.popup import Popup
 from kivy.uix.slider import Slider
+from kivy.uix.image import Image
 
 # Android SpeechRecognizer APIs must run on Android's UI thread, which is
 # distinct from Kivy's Python thread. Fall back to identity off Android.
@@ -1248,6 +1249,10 @@ class BingoLayout(BoxLayout):
         self.tts_speaking = False
         self.auto_speak = False
         self._speech_restart_event = None
+        self.live_popup = None
+        self.live_status_label = None
+        self.live_transcript_label = None
+        self._last_voice_phrase_time = 0.0
 
         self.hud = Label(
             text="✦ B I N G O  ·  LIVE AI v16.8\nYour assistant. Your progress. Your system.",
@@ -1369,14 +1374,53 @@ class BingoLayout(BoxLayout):
         popup.open()
 
     def live_voice_button(self, instance):
+        """Open a dedicated Live room and start listening only after user taps Live."""
         if self.continuous_listening:
             self.stop_continuous_listening(instance)
-            if hasattr(self, "live_button"):
-                self.live_button.text = "●  LIVE"
-        else:
-            self.toggle_continuous_listening(None)
-            if hasattr(self, "live_button"):
-                self.live_button.text = "■  END LIVE"
+            if self.live_popup is not None:
+                self.live_popup.dismiss()
+                self.live_popup = None
+            return
+        room = BoxLayout(orientation="vertical", spacing=dp(12), padding=dp(16))
+        room.add_widget(Label(text="♛ B I N G O", font_size="22sp", bold=True,
+                              color=(0.35, 0.72, 1, 1), size_hint_y=None, height=dp(40)))
+        # Character-inspired live stage: animated face state plus live transcript.
+        self.live_face = Label(text="◕‿◕", font_size="82sp", color=(0.25, 0.65, 1, 1))
+        room.add_widget(self.live_face)
+        self.live_status_label = Label(text="Tap START TALKING to begin", font_size="16sp",
+                                       color=(0.85, 0.9, 1, 1), size_hint_y=None, height=dp(34))
+        room.add_widget(self.live_status_label)
+        self.live_transcript_label = Label(text="Your words and Bingo's replies will appear here.",
+                                           font_size="15sp", halign="center", valign="middle")
+        self.live_transcript_label.text = "Your words and Bingo's replies will appear here."
+        room.add_widget(self.live_transcript_label)
+        controls = BoxLayout(size_hint_y=None, height=dp(50), spacing=dp(10))
+        start_btn = Button(text="🎙 START TALKING")
+        end_btn = Button(text="END LIVE")
+        controls.add_widget(start_btn); controls.add_widget(end_btn); room.add_widget(controls)
+        popup = Popup(title="Bingo Live", content=room, size_hint=(0.94, 0.88), auto_dismiss=False)
+        self.live_popup = popup
+        start_btn.bind(on_press=lambda *_: (popup.dismiss(), setattr(self, 'live_popup', None), self._start_live_room()))
+        end_btn.bind(on_press=lambda *_: (self.stop_continuous_listening(None), popup.dismiss(), setattr(self, 'live_popup', None)))
+        popup.open()
+
+    def _start_live_room(self):
+        # Keep Live UI present while listening; the chat screen remains behind it.
+        room = BoxLayout(orientation="vertical", spacing=dp(12), padding=dp(16))
+        room.add_widget(Label(text="♛ B I N G O", font_size="22sp", bold=True, color=(0.35,0.72,1,1), size_hint_y=None, height=dp(40)))
+        self.live_face = Label(text="◉‿◉", font_size="82sp", color=(0.25,0.65,1,1))
+        room.add_widget(self.live_face)
+        self.live_status_label = Label(text="Listening…", font_size="16sp", color=(0.65,0.9,1,1), size_hint_y=None, height=dp(34))
+        room.add_widget(self.live_status_label)
+        self.live_transcript_label = Label(text="Say hello to Bingo.", font_size="15sp", halign="center", valign="middle")
+        self.live_transcript_label.bind(size=lambda o,v: setattr(o,'text_size',v)); room.add_widget(self.live_transcript_label)
+        end_btn = Button(text="■  END LIVE", size_hint_y=None, height=dp(48))
+        room.add_widget(end_btn)
+        popup = Popup(title="Bingo Live", content=room, size_hint=(0.94,0.88), auto_dismiss=False)
+        self.live_popup = popup
+        end_btn.bind(on_press=lambda *_: (self.stop_continuous_listening(None), popup.dismiss(), setattr(self,'live_popup',None)))
+        popup.open()
+        self.toggle_continuous_listening(None)
 
     def start_voice_button(self, instance):
         """Start a voice conversation without an on/off toggle or spoken status announcement."""
@@ -1428,6 +1472,14 @@ class BingoLayout(BoxLayout):
             TextToSpeech = jnius.autoclass("android.speech.tts.TextToSpeech")
             HashMap = jnius.autoclass("java.util.HashMap")
             text = self.last_bingo_reply.strip()
+            # Speak clean prose only: remove markdown, emoji/symbol noise and repeated punctuation.
+            text = re.sub(r"```.*?```", " code omitted ", text, flags=re.S)
+            text = re.sub(r"`([^`]*)`", r"\1", text)
+            text = re.sub(r"https?://\S+", "link omitted", text)
+            text = re.sub(r"[\*_#~|<>\[\]{}]+", " ", text)
+            text = re.sub(r"[^\w\s.,!?;:'’()%-]", " ", text, flags=re.UNICODE)
+            text = re.sub(r"[;:,'-]{2,}", ".", text)
+            text = re.sub(r"\s+", " ", text).strip()
             # Android TTS handles long passages poorly; read a practical first section.
             if len(text) > 3500:
                 text = text[:3500] + ". The reply is longer, so I read the first part only."
@@ -1466,8 +1518,9 @@ class BingoLayout(BoxLayout):
             # recognizer start/stop tones. Android's public SpeechRecognizer API does not
             # expose a universal way to mute its own start tone.
             if self.continuous_listening:
-                self.voice_busy = True
-                self._stop_speech_recognizer_ui()
+                # Keep the recognizer active during TTS for best-effort barge-in.
+                # Acoustic echo may still be recognized on some phone/service combinations.
+                self.voice_busy = False
 
             # Use the String, int, HashMap overload supported by this Android TTS API.
             # A fresh utterance replaces any old spoken reply instead of overlapping it.
@@ -1481,10 +1534,10 @@ class BingoLayout(BoxLayout):
             # one fresh listening session. This avoids listening to Bingo's own voice.
             # Trade-off: speaking over Bingo will not interrupt playback in this mode.
             if self.continuous_listening:
-                Clock.schedule_once(
-                    lambda dt: self._resume_continuous_listening(),
-                    estimated_seconds + 0.35,
-                )
+                # Start a fresh recognition window while TTS is playing so a user can
+                # interrupt. The platform may still capture speaker echo or play a start tone.
+                Clock.schedule_once(lambda dt: self._start_speech_recognition(), 0.45)
+                Clock.schedule_once(lambda dt: self._resume_continuous_listening(), estimated_seconds + 0.35)
         except Exception as exc:
             self.add_message("⚔️ Bingo", "❌ Could not speak the reply: " + repr(exc))
 
@@ -1724,7 +1777,12 @@ class BingoLayout(BoxLayout):
             Clock.schedule_once(lambda dt: self._start_speech_recognition(), 0.5)
             return
         self.voice_busy = True
+        self._last_voice_phrase_time = time.monotonic()
         self.add_message("Abdul 🎙️", phrase)
+        if self.live_transcript_label is not None:
+            self.live_transcript_label.text = "You: " + phrase + "\n\nBingo is thinking…"
+        if self.live_status_label is not None:
+            self.live_status_label.text = "Thinking…"
         quick = command_response(phrase)
         if quick is not None:
             self.add_message("⚔️ Bingo", quick)
@@ -1741,6 +1799,12 @@ class BingoLayout(BoxLayout):
         self.add_message("⚔️ Bingo", answer)
         self._streaming_bubble = None
         self.last_bingo_reply = str(answer)
+        if self.live_transcript_label is not None:
+            self.live_transcript_label.text = "Bingo: " + re.sub(r"[\*_#~|<>\[\]{}]+", " ", str(answer))
+        if self.live_status_label is not None:
+            self.live_status_label.text = "Bingo is speaking…"
+        if hasattr(self, "live_face"):
+            self.live_face.text = "◖ᴗ◗"
         Clock.schedule_once(lambda dt: self._speak_voice_answer(), 0)
 
     def _speak_voice_answer(self):
@@ -1750,6 +1814,10 @@ class BingoLayout(BoxLayout):
 
     def _mark_tts_finished(self):
         self.tts_speaking = False
+        if self.live_status_label is not None and self.continuous_listening:
+            self.live_status_label.text = "Listening…"
+        if hasattr(self, "live_face") and self.continuous_listening:
+            self.live_face.text = "◉‿◉"
 
     def _interrupt_tts_for_user(self):
         """Stop Bingo's current spoken reply when recognition detects speech."""
@@ -1769,6 +1837,11 @@ class BingoLayout(BoxLayout):
         if self.continuous_listening:
             self.voice_busy = False
             self.tts_speaking = False
+            if self.live_status_label is not None:
+                self.live_status_label.text = "Listening…"
+            if hasattr(self, "live_face"):
+                self.live_face.text = "◉‿◉"
+            # SpeechRecognizer usually ends after a result; restart only after TTS ends.
             self._start_speech_recognition()
 
     def _speech_error(self, error):
