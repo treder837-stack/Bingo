@@ -1,5 +1,5 @@
 # ============================================================
-# ⚔️ BINGO — SOLO SYSTEM v16.9.4 LIVE BARGE-IN
+# ⚔️ BINGO — SOLO SYSTEM v16.9.5 LIVE STABILITY
 # Kivy + Gemini + TTS + optional continuous speech recognition + notifications + alarm
 # Combines memory recall, follow-up awareness, adaptive responses, voice output, and daily-system context
 # ============================================================
@@ -1253,6 +1253,9 @@ class BingoLayout(BoxLayout):
         self.live_status_label = None
         self.live_transcript_label = None
         self._last_voice_phrase_time = 0.0
+        self._live_anim_event = None
+        self._last_handled_phrase = ""
+        self._last_handled_at = 0.0
 
         self.hud = Label(
             text="✦ B I N G O  ·  LIVE AI v16.8\nYour assistant. Your progress. Your system.",
@@ -1385,7 +1388,7 @@ class BingoLayout(BoxLayout):
         room.add_widget(Label(text="♛ B I N G O", font_size="22sp", bold=True,
                               color=(0.35, 0.72, 1, 1), size_hint_y=None, height=dp(40)))
         # Character-inspired live stage: animated face state plus live transcript.
-        self.live_face = Label(text="◕‿◕", font_size="82sp", color=(0.25, 0.65, 1, 1))
+        self.live_face = Label(text="( BINGO )", font_size="38sp", bold=True, color=(0.25, 0.65, 1, 1))
         room.add_widget(self.live_face)
         self.live_status_label = Label(text="Tap START TALKING to begin", font_size="16sp",
                                        color=(0.85, 0.9, 1, 1), size_hint_y=None, height=dp(34))
@@ -1400,15 +1403,46 @@ class BingoLayout(BoxLayout):
         controls.add_widget(start_btn); controls.add_widget(end_btn); room.add_widget(controls)
         popup = Popup(title="Bingo Live", content=room, size_hint=(0.94, 0.88), auto_dismiss=False)
         self.live_popup = popup
-        start_btn.bind(on_press=lambda *_: (popup.dismiss(), setattr(self, 'live_popup', None), self._start_live_room()))
+        start_btn.bind(on_press=lambda *_: self._activate_live_room(popup, room, start_btn, end_btn))
         end_btn.bind(on_press=lambda *_: (self.stop_continuous_listening(None), popup.dismiss(), setattr(self, 'live_popup', None)))
         popup.open()
+
+    def _activate_live_room(self, popup, room, start_btn, end_btn):
+        """Start Live in the already-open room; avoid closing/reopening the UI."""
+        try:
+            start_btn.disabled = True
+            start_btn.text = "LISTENING…"
+            if self.live_status_label is not None:
+                self.live_status_label.text = "Starting microphone…"
+            if self.live_transcript_label is not None:
+                self.live_transcript_label.text = "Bingo is ready. Speak after listening starts."
+            self.live_popup = popup
+            self.toggle_continuous_listening(None)
+            if self._live_anim_event is not None:
+                self._live_anim_event.cancel()
+            self._live_anim_event = Clock.schedule_interval(self._animate_live_face, 0.55)
+        except Exception as exc:
+            start_btn.disabled = False
+            start_btn.text = "START TALKING"
+            if self.live_status_label is not None:
+                self.live_status_label.text = "Could not start: " + str(exc)
+
+    def _animate_live_face(self, dt):
+        """Font-safe simple state animation; no unsupported emoji/glyph characters."""
+        if not self.continuous_listening or self.live_face is None:
+            return
+        if self.tts_speaking:
+            self.live_face.text = "( BINGO talks… )" if self.live_face.text == "( BINGO )" else "( BINGO )"
+        elif self.voice_busy:
+            self.live_face.text = "( listening… )"
+        else:
+            self.live_face.text = "( BINGO )"
 
     def _start_live_room(self):
         # Keep Live UI present while listening; the chat screen remains behind it.
         room = BoxLayout(orientation="vertical", spacing=dp(12), padding=dp(16))
         room.add_widget(Label(text="♛ B I N G O", font_size="22sp", bold=True, color=(0.35,0.72,1,1), size_hint_y=None, height=dp(40)))
-        self.live_face = Label(text="◉‿◉", font_size="82sp", color=(0.25,0.65,1,1))
+        self.live_face = Label(text="( BINGO )", font_size="38sp", bold=True, color=(0.25,0.65,1,1))
         room.add_widget(self.live_face)
         self.live_status_label = Label(text="Listening…", font_size="16sp", color=(0.65,0.9,1,1), size_hint_y=None, height=dp(34))
         room.add_widget(self.live_status_label)
@@ -1513,14 +1547,13 @@ class BingoLayout(BoxLayout):
                     TTS_ENGINE.setPitch(float(VOICE_SETTINGS.get("pitch", 1.0)))
                 except Exception:
                     pass
-            # Pause Android speech recognition before playback. Leaving the recognizer
-            # running while TTS speaks can trigger feedback, false barge-in, and repeated
-            # recognizer start/stop tones. Android's public SpeechRecognizer API does not
-            # expose a universal way to mute its own start tone.
+            # Stable audio policy: pause recognition while TTS plays. The default Android
+            # SpeechRecognizer often captures speaker echo and can cause Bingo to answer
+            # its own reply. Reliable barge-in needs a full-duplex audio pipeline with AEC;
+            # this public recognizer path cannot provide that consistently on all devices.
             if self.continuous_listening:
-                # Keep the recognizer active during TTS for best-effort barge-in.
-                # Acoustic echo may still be recognized on some phone/service combinations.
-                self.voice_busy = False
+                self._stop_speech_recognizer_ui()
+                self.voice_busy = True
 
             # Use the String, int, HashMap overload supported by this Android TTS API.
             # A fresh utterance replaces any old spoken reply instead of overlapping it.
@@ -1534,9 +1567,6 @@ class BingoLayout(BoxLayout):
             # one fresh listening session. This avoids listening to Bingo's own voice.
             # Trade-off: speaking over Bingo will not interrupt playback in this mode.
             if self.continuous_listening:
-                # Start a fresh recognition window while TTS is playing so a user can
-                # interrupt. The platform may still capture speaker echo or play a start tone.
-                Clock.schedule_once(lambda dt: self._start_speech_recognition(), 0.45)
                 Clock.schedule_once(lambda dt: self._resume_continuous_listening(), estimated_seconds + 0.35)
         except Exception as exc:
             self.add_message("⚔️ Bingo", "❌ Could not speak the reply: " + repr(exc))
@@ -1774,8 +1804,18 @@ class BingoLayout(BoxLayout):
         if not self.continuous_listening:
             return
         if not phrase:
-            Clock.schedule_once(lambda dt: self._start_speech_recognition(), 0.5)
+            if not self.tts_speaking:
+                Clock.schedule_once(lambda dt: self._start_speech_recognition(), 0.7)
             return
+        # Never treat recognition results captured during TTS playback as user speech.
+        # This is the main guard against Bingo replying to its own spoken answer.
+        if self.tts_speaking:
+            return
+        now = time.monotonic()
+        if phrase.casefold() == self._last_handled_phrase.casefold() and now - self._last_handled_at < 2.5:
+            return
+        self._last_handled_phrase = phrase
+        self._last_handled_at = now
         self.voice_busy = True
         self._last_voice_phrase_time = time.monotonic()
         self.add_message("Abdul 🎙️", phrase)
@@ -1804,7 +1844,7 @@ class BingoLayout(BoxLayout):
         if self.live_status_label is not None:
             self.live_status_label.text = "Bingo is speaking…"
         if hasattr(self, "live_face"):
-            self.live_face.text = "◖ᴗ◗"
+            self.live_face.text = "( BINGO talks )"
         Clock.schedule_once(lambda dt: self._speak_voice_answer(), 0)
 
     def _speak_voice_answer(self):
@@ -1817,7 +1857,7 @@ class BingoLayout(BoxLayout):
         if self.live_status_label is not None and self.continuous_listening:
             self.live_status_label.text = "Listening…"
         if hasattr(self, "live_face") and self.continuous_listening:
-            self.live_face.text = "◉‿◉"
+            self.live_face.text = "( BINGO )"
 
     def _interrupt_tts_for_user(self):
         """Stop Bingo's current spoken reply when recognition detects speech."""
@@ -1840,7 +1880,7 @@ class BingoLayout(BoxLayout):
             if self.live_status_label is not None:
                 self.live_status_label.text = "Listening…"
             if hasattr(self, "live_face"):
-                self.live_face.text = "◉‿◉"
+                self.live_face.text = "( BINGO )"
             # SpeechRecognizer usually ends after a result; restart only after TTS ends.
             self._start_speech_recognition()
 
